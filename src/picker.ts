@@ -32,6 +32,18 @@ export function makePicker() {
     return names(catalog.filter(item => item.name.includes(term))) || '<p class="hint">没有找到匹配的卦名。</p>';
   }
 
+  function renderWorkspace(lineMark: (yang: boolean) => string) {
+    const grid = (side: 'upper' | 'lower', label: string, selected: number | undefined) => `
+      <section class="card pick-card"><h2>${label}</h2><div class="trigram-grid">${trigrams.map((tri, index) => `
+        <button type="button" data-${side}="${index}" aria-label="${label}：${tri.name}" aria-pressed="${selected === index}">
+          <span class="trigram-lines">${[...tri.lines].reverse().map(yang => lineMark(yang)).join('')}</span>${tri.name}
+        </button>`).join('')}</div></section>`;
+    const movingNames = positions.filter((_, i) => moving.has(i));
+    return `${grid('upper', '上卦', upper)}${grid('lower', '下卦', lower)}
+      <section class="card pick-card pick-moving"><div class="section-title"><h2>动爻</h2><span>${movingNames.length ? '已选：' + movingNames.join('、') : '已选：无 · 静卦'}</span></div>
+        <div class="moving-grid">${positions.map((name, i) => `<button type="button" data-mchip="${i}" aria-label="动爻：${name}" aria-pressed="${moving.has(i)}">${name}</button>`).join('')}</div></section>`;
+  }
+
   function render(lineMark: (yang: boolean) => string, esc: (value: string) => string, calendarCard: string) {
     const grid = (side: 'upper' | 'lower', label: string, selected: number | undefined) => `
       <section class="card pick-card">
@@ -78,7 +90,7 @@ export function makePicker() {
   }
 
   return {
-    render, lines, search,
+    render, renderWorkspace, lines, search,
     hasDraft: () => upper !== undefined || lower !== undefined || Boolean(query) || browseOpen,
     chooseUpper(index: number) { select(index, lower); },
     chooseLower(index: number) { select(upper, index); },

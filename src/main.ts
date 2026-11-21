@@ -1,17 +1,20 @@
 import './styles.css';
 import { branchElement, castChart, dayVoids, instantLines, trigrams, type ChartCalendar, type LineInput } from './domain';
-import { isResultStatus, makeBackup, methodLabels, readRecords, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
+import { isResultStatus, makeBackup, methodLabels, readRecords, recordTitle, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
 import { makePicker } from './picker';
 import { enableAppUpdates } from './app-update';
 import { nayinName } from './nayin';
+import { compressImage } from './image-local';
+import { initialPeriod, renderPeriod, type PeriodState } from './period';
 import { currentCalendar, renderCalendarSheet, renderPickCalendar, type CalendarField, type CalendarSheet } from './pick-calendar';
 import { Solar } from 'lunar-javascript';
 
 type EntryMethod = Exclude<Method, 'instant'>;
 const lastMethod = safeGet('liuyao.method');
-const initialMethod = lastMethod === 'coins' || lastMethod === 'pick' ? lastMethod : 'book';
+const initialMethod = lastMethod === 'coins' || lastMethod === 'pick' || lastMethod === 'image' ? lastMethod : 'book';
 const picker = makePicker();
-const state: { method: EntryMethod; page: 'entry'|'chart'|'records'; time: string; question: string; pages: [string,string]; coins: (LineInput|null)[]; active: number; chart?: ReturnType<typeof castChart>; mode: 'all'|'moving'; settings: boolean; hidden: boolean } = {
+const imagePicker = makePicker();
+const state: { method: EntryMethod; page: 'entry'|'image'|'chart'|'records'; time: string; question: string; pages: [string,string]; coins: (LineInput|null)[]; active: number; chart?: ReturnType<typeof castChart>; mode: 'all'|'moving'; settings: boolean; hidden: boolean } = {
   method: initialMethod, page: 'entry', time: currentTime(), question: '', pages: ['', ''], coins: Array(6).fill(null), active: 0,
   mode: safeGet('liuyao.transform') === 'all' ? 'all' : 'moving', settings: false, hidden: false,
 };
@@ -28,6 +31,11 @@ let backupMessage = '';
 let touchStart: { id: string; x: number; y: number } | undefined;
 let suppressRecordClickUntil = 0;
 let timeEdited = false;
+let imageData: string | undefined;
+let imageNote = '';
+let imageError = '';
+let imageSheet: 'view' | 'edit' | undefined;
+let periodState: PeriodState | undefined;
 let showNayin = safeGet('liuyao.showNayin') !== 'off';
 let customPickCalendar: ChartCalendar | undefined;
 let calendarSheet: CalendarSheet | undefined;
@@ -80,6 +88,8 @@ function pageError(value: string): string {
 }
 function resetEntry() {
   picker.reset();
+  periodState = undefined;
+  imagePicker.reset(); imageData = undefined; imageNote = ''; imageError = ''; imageSheet = undefined;
   customPickCalendar = undefined;
   state.page = 'entry'; state.pages = ['', '']; state.coins = Array(6).fill(null);
   state.active = 0; state.time = currentTime(); state.question = ''; timeEdited = false;
@@ -99,7 +109,7 @@ function renderEntry():string {
       <button id="instant-cast" class="instant-button">即时排盘</button>
     </div>
     <input class="card question" id="question" maxlength="80" placeholder="所问何事（选填）" value="${esc(state.question)}">
-    <div class="segmented"><button data-method="book" class="${state.method==='book'?'selected':''}">翻书页</button><button data-method="coins" class="${state.method==='coins'?'selected':''}">硬币</button><button data-method="pick" aria-pressed="${state.method==='pick'}" class="${state.method==='pick'?'selected':''}">选卦</button></div>`;
+    <div class="segmented entry-methods"><button data-method="book" class="${state.method==='book'?'selected':''}">翻书页</button><button data-method="coins" class="${state.method==='coins'?'selected':''}">硬币</button><button data-method="pick" aria-pressed="${state.method==='pick'}" class="${state.method==='pick'?'selected':''}">选卦</button><button data-method="image" class="${state.method==='image'?'selected':''}">观象</button></div>`;
   let body='';
   if(state.method==='book') body=`<section class="card book-card"><label>第一次翻到的页数<input class="page-input" id="page1" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[0])}"></label><label>第二次翻到的页数<input class="page-input" id="page2" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[1])}"></label><p class="hint">随手翻，按先后顺序填入页码</p><p class="input-error" id="page-error" role="status">${state.pages.map(pageError).filter(Boolean).join("；")}</p></section><button class="primary" id="book-submit" ${valid?'':'disabled'}>确认起卦</button>`;
   else if (state.method === "pick") {
@@ -107,10 +117,18 @@ function renderEntry():string {
     const dateCaption = formatTime(date).split(' ')[0] + (date.slice(0, 10) === currentTime().slice(0, 10) ? ' · 今天' : ' · 已手动设时');
     body = picker.render(lineMark, esc, renderPickCalendar(customPickCalendar ?? currentCalendar(date), dateCaption, flashCalendar));
   }
+  else if (state.method === 'image') body = `<section class="card image-upload"><svg class="image-upload-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="13" width="38" height="27" rx="6"/><circle cx="24" cy="26.5" r="7.5"/><rect x="17" y="8" width="14" height="6" rx="3"/></svg><h2>让对方随手拍一张照片</h2><p>照片只存在这条记录里，不上传云端</p><div class="image-upload-actions"><button type="button" data-image-source="album">从相册选择</button><button type="button" data-image-source="camera">拍照</button></div><input id="image-album" type="file" accept="image/*" hidden><input id="image-camera" type="file" accept="image/*" capture="environment" hidden>${imageError ? `<p role="status" class="hint">${esc(imageError)}</p>` : ''}</section><button class="primary" id="image-open" disabled>确认起卦</button>`;
   else body=`<section class="card cast-card"><div class="section-title"><strong>${step===6?"六爻已录齐":"第"+(step+1)+"次 · "+ordinal[step]}</strong><span>${step===6?"6/6 已录入":"当前第"+(step+1)+"步 · 已录"+state.coins.filter(Boolean).length+"爻"}</span></div><div class="options" ${step===6?"hidden":""}>${coinOptions.map((o,i)=>`<button class="option" data-option="${i}"><span class="coins">${Array.from({length:3},(_,j)=>`<i class="coin ${j<o.back?'back':''}">${j<o.back?'':'字'}</i>`).join('')}</span><b>${o.n}</b><small>${o.desc} <em>${o.mark}</em> ${o.moving?'动':'静'}</small></button>`).join('')}</div></section><section class="card preview"><div class="section-title"><strong>已录入</strong><button id="previous" ${step===0?'disabled':''}>上一步</button></div>${[5,4,3,2,1,0].map(i=>{const l=state.coins[i];return `<button class="preview-row" data-line="${i}" ${l?"":"disabled"}><span>${ordinal[i]}</span>${l?lineMark(l.yang):'<span class="placeholder">—</span>'}<span class="preview-state">${l?(l.moving?`${l.yang?'○':'×'} 动`:'静'):' '}</span><span class="chevron">${l?'›':''}</span></button>`}).join('')}</section><button class="primary" id="coin-submit" ${complete?'':'disabled'}>装卦排盘</button>`;
   const recent = records.slice().sort((a, b) => (b.createdAt ?? b.time).localeCompare(a.createdAt ?? a.time)).slice(0, 3);
-  const recentList = recent.length ? `<section class="recent"><div class="recent-heading"><span>最 近</span><button id="all-records">全部记录 ›</button></div>${recent.map(item => `<button class="recent-item" data-record-open="${esc(item.id)}" data-record-origin="home"><span class="recent-dot" aria-hidden="true"></span><span><strong>${esc(item.question || '未填写所问何事')}</strong><small>${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ''} · ${methodLabels[item.method]}</small></span><time>${formatTime(item.time)}</time></button>`).join('')}</section>` : '';
+  const recentList = recent.length ? `<section class="recent"><div class="recent-heading"><span>最 近</span><button id="all-records">全部记录 ›</button></div>${recent.map(item => `<button class="recent-item" data-record-open="${esc(item.id)}" data-record-origin="home">${item.method === 'image' && item.image ? `<img class="recent-thumb" src="${item.image}" alt="">` : '<span class="recent-dot" aria-hidden="true"></span>'}<span><strong>${esc(recordTitle(item))}</strong><small>${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ''} · ${methodLabels[item.method]}</small></span><time>${formatTime(item.time)}</time></button>`).join('')}</section>` : '';
   return `<main class="shell">${header}${body}${recentList}</main>${state.hidden?`<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>起卦时间</h2><label>日期与时间<input id="time-picker" type="datetime-local" required min="1900-01-01T00:00" max="2100-12-31T23:59" value="${state.time}"></label><button class="primary" id="time-done">完成</button></section></div>`:''}`;
+}
+function renderImageWorkspace(): string {
+  return `<main class="shell image-workspace"><header class="topbar chart-nav"><button id="image-back" aria-label="返回首页">‹</button><h1>观象</h1></header>
+    <section class="card image-photo"><img src="${imageData}" alt="待取象的照片"><div class="image-divider" aria-hidden="true"></div><button type="button" data-image-source="album">换一张</button><input id="image-album" type="file" accept="image/*" hidden></section>
+    ${imagePicker.renderWorkspace(lineMark)}
+    <section class="card image-note-card"><div class="section-title"><h2>取象笔记</h2><span id="image-count">${[...imageNote].length} / 60</span></div><p class="hint">记录的标题取笔记第一句（到第一个标点为止）</p><textarea id="image-note" maxlength="60" rows="3">${esc(imageNote)}</textarea></section>
+    ${imageError ? `<p role="status" class="hint">${esc(imageError)}</p>` : ''}<button class="primary" id="image-submit" ${imagePicker.lines() ? '' : 'disabled'}>确认起卦</button></main>`;
 }
 function renderChart(): string {
   const chart = state.chart!;
@@ -144,7 +162,7 @@ function renderChart(): string {
       ? `<span class="pan-line-text">${najia(line)}<small class="pan-nayin">纳音 ${nayin}</small></span>`
       : najia(line);
     return `<div class="pan-row pan-${side}" data-position="${index + 1}">
-      <div class="pan-data"><span class="pan-meta ${changed ? 'pan-change-meta' : ''}">${changed ? relation : rowNames[index][0] + '·' + chart.dateGods[index]}</span>${lineMark(line.yang)}${lineText}<span class="pan-badges">${badge}${empty}</span></div>
+      <div class="pan-data">${changed ? `<span class="pan-meta pan-change-meta">${relation}</span>` : `<span class="pan-line-stack"><span class="pan-meta">${chart.dateGods[index]}</span>${lineMark(line.yang)}</span>`}${changed ? lineMark(line.yang) : ''}${lineText}<span class="pan-badges">${badge}${empty}</span></div>
     </div>`;
   }
 
@@ -164,7 +182,7 @@ function renderChart(): string {
 
   return `<header class="topbar chart-nav pan-nav"><button id="back" aria-label="${chartOrigin === 'entry' ? '返回起卦' : '返回记录'}">‹</button><h1>观爻</h1><button id="settings" aria-label="设置">⚙</button></header>
   <main class="shell pan-shell">
-    ${customCalendar ? '' : `<section class="card pan-time"><div class="pan-date">${date}</div><div class="pan-pillars">${calendar}</div></section>`}
+    ${customCalendar ? '' : `<section class="card pan-time"><div class="pan-time-head"><div class="pan-date">${date}</div><button type="button" id="period-open" aria-label="查询往来干支"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg></button></div><div class="pan-pillars">${calendar}</div></section>`}
     ${editingQuestion
       ? `<form id="note-form" class="card chart-question note-form"><label for="note-input">所问何事</label><input id="note-input" maxlength="80" value="${esc(question)}"><button class="primary" type="submit">保存备注</button></form>`
       : `<button class="card chart-question" id="edit-note"><span class="pan-question ${question ? '' : 'muted'}">${esc(question || '添加所问何事')}</span><span>编辑</span></button>`}
@@ -188,8 +206,11 @@ function renderChart(): string {
       </button>
       <div id="pan-hidden-detail" class="pan-hidden-detail"${state.hidden ? '' : ' hidden'}>${hiddenDetail || '本卦六亲齐全。'}</div>
     </section>
+    ${openedRecord?.method === 'image' ? `<section class="card image-evidence"><div class="section-title"><strong>原图 · 取象</strong><button type="button" id="image-edit">编辑</button></div><div class="image-evidence-body"><button type="button" id="image-view" aria-label="查看原图"><img src="${openedRecord.image}" alt="取象原图"></button><p>${esc(openedRecord.imageNote ?? '')}</p></div></section>` : ''}
     <button class="primary restart" id="restart">重新起卦</button>${openedRecord ? renderCase(openedRecord) : ''}
   </main>
+  ${periodState ? renderPeriod(periodState, openedRecord?.time ?? state.time, chart.pillars.day, chart.pillars.month) : ''}
+  ${imageSheet ? `<div class="scrim" id="image-scrim"><section class="sheet image-sheet"><div class="sheet-handle"></div><button type="button" id="image-close" aria-label="关闭">×</button><h2>${imageSheet === 'view' ? '原图' : '编辑取象笔记'}</h2>${imageSheet === 'view' ? `<img src="${openedRecord?.image}" alt="取象原图">` : `<form id="image-edit-form"><textarea id="image-edit-note" maxlength="60" rows="4">${esc(openedRecord?.imageNote ?? '')}</textarea><div id="image-edit-count">${[...(openedRecord?.imageNote ?? '')].length} / 60</div><button class="primary" type="submit">保存</button></form>`}</section></div>` : ''}
   ${state.settings ? `<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>设置</h2><p>变卦显示</p><div class="segmented"><button data-mode="all" class="${state.mode==='all'?'selected':''}">全部显示</button><button data-mode="moving" class="${state.mode==='moving'?'selected':''}">仅动爻</button></div>
     <div class="nayin-setting"><div><strong id="nayin-setting-label">显示纳音</strong><p class="hint" id="nayin-setting-hint">每爻纳甲下方的小字纳音名</p></div><button type="button" id="nayin-toggle" role="switch" aria-checked="${showNayin}" aria-labelledby="nayin-setting-label" aria-describedby="nayin-setting-hint"></button></div>
     <button class="plain-action" id="settings-done">完成</button></section></div>` : ''}`;
@@ -209,7 +230,7 @@ function recordsList(): string {
   const query = recordSearch.trim().toLowerCase();
   const matches = records
     .filter(item => recordFilter === 'recent' || item.favorite)
-    .filter(item => [item.question, item.original, item.transformed, item.judgment].some(text => text?.toLowerCase().includes(query)))
+    .filter(item => [item.question, item.original, item.transformed, item.judgment, item.imageNote].some(text => text?.toLowerCase().includes(query)))
     .sort((a, b) => (b.createdAt ?? b.time).localeCompare(a.createdAt ?? a.time));
   if (!matches.length) {
     return '<p class="records-empty">' + (query ? '未找到符合条件的记录' : recordFilter === 'favorite' ? '暂无收藏，去最近记录点「收藏」即可添加' : '暂无排盘记录') + '</p>';
@@ -221,7 +242,7 @@ function recordsList(): string {
     const revealed = revealedRecord === item.id;
     return `<article class="record-item${revealed ? ' delete-revealed' : ''}" data-record-id="${id}">
       <button class="record-open" data-record-open="${id}">
-        <strong>${esc(item.question || '未填写所问何事')}</strong>
+        ${item.method === 'image' && item.image ? `<img class="record-thumb" src="${item.image}" alt="">` : ''}<strong>${esc(recordTitle(item))}</strong>
         <span class="record-names">${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ' · 静卦'}</span>
         <span class="record-meta"><time>${item.time.replace('T', ' ')}</time><small>${methodLabels[item.method]}</small></span>
         ${repeat || item.createdAt ? `<span class="record-save-meta">${repeat.replace(/^ · /, '')}${repeat && item.createdAt ? ' · ' : ''}${item.createdAt ? `存于 ${new Date(item.createdAt).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}` : ''}</span>` : ''}
@@ -257,7 +278,7 @@ function render(preserveChartForms = false) {
   document.body.classList.toggle('records-page', state.page === 'records');
   const app = document.querySelector<HTMLDivElement>('#app')!;
   const forms = preserveChartForms && state.page === 'chart' ? [...app.querySelectorAll<HTMLFormElement>('#case-form, #note-form')] : [];
-  const page = state.page === 'entry' ? renderEntry() : state.page === 'chart' ? renderChart() : renderRecords();
+  const page = state.page === 'entry' ? renderEntry() : state.page === 'image' ? renderImageWorkspace() : state.page === 'chart' ? renderChart() : renderRecords();
   app.innerHTML = page + (calendarSheet ? renderCalendarSheet(calendarSheet, activeCalendar(), animateCalendarSheet) : '');
   for (const form of forms) app.querySelector(`#${form.id}`)?.replaceWith(form);
   if (calendarSheet) {
@@ -278,6 +299,7 @@ function submit(entry: LineInput[] | 'instant', isPick = false) {
     lines: lines.map(line => ({ ...line })), original: chart.name,
     transformed: lines.some(line => line.moving) ? chart.changedName : null, favorite: false, createdAt: new Date().toISOString(),
     ...(calendar ? { calendar } : {}),
+    ...(state.method === 'image' && entry !== 'instant' ? { image: imageData, imageNote } : {}),
   };
   commitRecords([openedRecord, ...records]);
   state.chart = chart;
@@ -327,6 +349,7 @@ function chooseCalendarValue(stem?: string, branch?: string) {
 
 function showChart() {
   state.page = 'chart';
+  periodState = undefined;
   state.hidden = false;
   state.settings = false;
   editingQuestion = false;
@@ -335,9 +358,23 @@ function showChart() {
 }
 document.addEventListener('click',event=>{
   const element = event.target as HTMLElement;
+  if (element.id === 'period-overlay') { periodState = undefined; render(true); return; }
+  if (element.id === 'image-scrim') { imageSheet = undefined; render(true); return; }
   if (element.id === 'calendar-scrim') { closeCalendarSheet(); return; }
   if (element.id === 'scrim') { const wasSettings = state.settings; state.settings = false; state.hidden = false; render(wasSettings); return; }
   const target=element.closest<HTMLElement>('button');if(!target)return;
+  if (target.id === 'period-open') { periodState = initialPeriod(openedRecord?.time ?? state.time); render(true); return; }
+  if (target.id === 'period-close' || target.id === 'period-done') { periodState = undefined; render(true); return; }
+  if (periodState && target.dataset.periodView) { periodState.view = target.dataset.periodView as 'day'|'month'; render(true); return; }
+  if (periodState && target.dataset.periodElement) { periodState.element = periodState.element === target.dataset.periodElement ? undefined : target.dataset.periodElement; render(true); return; }
+  if (periodState && target.dataset.periodShift) { const next=new Date(Date.UTC(periodState.year,periodState.month-1+Number(target.dataset.periodShift),1)); periodState.year=next.getUTCFullYear(); periodState.month=next.getUTCMonth()+1; render(true); return; }
+  if (periodState && target.dataset.periodDay) { periodState.selectedDay=target.dataset.periodDay; render(true); return; }
+  if (periodState && target.dataset.periodMonth) { periodState.selectedMonth=Number(target.dataset.periodMonth); render(true); return; }
+  if (target.id === 'image-close') { imageSheet = undefined; render(true); return; }
+  if (target.id === 'image-view' || target.id === 'image-edit') { imageSheet = target.id === 'image-view' ? 'view' : 'edit'; render(true); return; }
+  if (target.id === 'image-back') { state.page = 'entry'; render(); return; }
+  if (target.dataset.imageSource) { document.getElementById(target.dataset.imageSource === 'camera' ? 'image-camera' : 'image-album')?.click(); return; }
+  if (target.id === 'image-submit') { const lines = imagePicker.lines(); if (imageData && lines) submit(lines); return; }
   if (target.id === 'calendar-close') { closeCalendarSheet(); return; }
   if (target.id === 'calendar-current') { customPickCalendar = undefined; flashCalendar = true; render(); return; }
   if (target.dataset.calendarField) {
@@ -399,9 +436,10 @@ document.addEventListener('click',event=>{
   if (target.dataset.upper !== undefined || target.dataset.lower !== undefined || target.dataset.moving !== undefined || target.dataset.mchip !== undefined) {
     const key = target.dataset.upper !== undefined ? 'upper' : target.dataset.lower !== undefined ? 'lower' : target.dataset.moving !== undefined ? 'moving' : 'mchip';
     const index = Number(target.dataset[key]);
-    if (key === 'upper') picker.chooseUpper(index);
-    else if (key === 'lower') picker.chooseLower(index);
-    else picker.toggleMoving(index);
+    const activePicker = state.page === 'image' ? imagePicker : picker;
+    if (key === 'upper') activePicker.chooseUpper(index);
+    else if (key === 'lower') activePicker.chooseLower(index);
+    else activePicker.toggleMoving(index);
     render();
     document.querySelector<HTMLElement>(`[data-${key}="${index}"]`)?.focus({ preventScroll: true });
     return;
@@ -424,8 +462,11 @@ document.addEventListener('click',event=>{
   if(target.id==='time-done'){const input=document.querySelector<HTMLInputElement>('#time-picker');if(!input?.value || !input.reportValidity())return;timeEdited=timeEdited||input.value!==state.time;state.time=input.value;state.hidden=false;render();return;}
   if(target.id==='book-submit'){
     if (!state.pages.every(validPage)) return;
-    const a=Number(state.pages[0]),b=Number(state.pages[1]);const up=trigrams[(a%8||8)-1],down=trigrams[(b%8||8)-1];const remainder=(a%6+b%6)%6;const movingAt=(remainder||6)-1;
-    const bits=[...down.lines,...up.lines].map((yang,i)=>({yang,moving:i===movingAt}));submit(bits);return;
+    const firstPage=Number(state.pages[0]),secondPage=Number(state.pages[1]);
+    const lower=trigrams[(firstPage%8||8)-1],upper=trigrams[(secondPage%8||8)-1];
+    const movingAt=(firstPage+secondPage)%6-1;
+    const bits=[...lower.lines,...upper.lines].map((yang,i)=>({yang,moving:movingAt>=0&&i===movingAt}));
+    submit(bits);return;
   }
   if(target.dataset.option!==undefined){const o=[{yang:true,moving:true},{yang:true,moving:false},{yang:false,moving:false},{yang:false,moving:true}][Number(target.dataset.option)];if (event.detail > 1 || state.active > 5) return;state.coins[state.active]=o;const next=state.coins.findIndex(x=>!x);state.active=next<0?6:next;render();return;}
   if(target.dataset.line!==undefined){const i=Number(target.dataset.line);if(state.coins[i]){state.active=i;render();}return;}
@@ -448,6 +489,8 @@ document.addEventListener('click',event=>{
 });
 document.addEventListener('input',event=>{
   const el=event.target as HTMLInputElement;
+  if (el.id === 'image-note') { imageNote = [...el.value].slice(0, 60).join(''); document.getElementById('image-count')!.textContent = `${[...imageNote].length} / 60`; return; }
+  if (el.id === 'image-edit-note') { document.getElementById('image-edit-count')!.textContent = `${[...el.value].length} / 60`; return; }
   if (el.id === 'hex-search') {
     document.getElementById('hex-results')!.innerHTML = picker.search(el.value);
     return;
@@ -465,9 +508,19 @@ document.addEventListener('toggle', event => {
   const details = event.target as HTMLDetailsElement;
   if (details.id === 'hex-catalog' && details.isConnected) picker.setBrowseOpen(details.open);
 }, true);
-document.addEventListener('keydown',event=>{if(event.key==='Escape' && calendarSheet){closeCalendarSheet();return;}if(event.key==='Escape'&&(state.settings||state.hidden)){const wasSettings=state.settings;state.settings=false;state.hidden=false;render(wasSettings);}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape' && periodState){periodState=undefined;render(true);return;}if(event.key==='Escape' && imageSheet){imageSheet=undefined;render(true);return;}if(event.key==='Escape' && calendarSheet){closeCalendarSheet();return;}if(event.key==='Escape'&&(state.settings||state.hidden)){const wasSettings=state.settings;state.hidden=false;state.settings=false;render(wasSettings);}});
 document.addEventListener('change', async event => {
   const input = event.target as HTMLInputElement;
+  if ((input.id === 'image-album' || input.id === 'image-camera') && input.files?.[0]) {
+    try {
+      const compressed = await compressImage(input.files[0]);
+      if (!imageData) imagePicker.reset();
+      imageData = compressed; imageError = '';
+      state.page = 'image';
+    } catch (error) { imageError = error instanceof Error ? error.message : '照片处理失败'; }
+    render();
+    return;
+  }
   if (input.id !== 'backup-file' || !input.files?.[0]) return;
   try {
     const data = await input.files[0].text();
@@ -486,6 +539,13 @@ document.addEventListener('change', async event => {
 
 document.addEventListener('submit', event => {
   const form = event.target as HTMLFormElement;
+  if (form.id === 'image-edit-form' && openedRecord) {
+    event.preventDefault();
+    const note = [...(form.querySelector<HTMLTextAreaElement>('#image-edit-note')?.value ?? '')].slice(0, 60).join('');
+    openedRecord = { ...openedRecord, imageNote: note };
+    commitRecords(records.map(item => item.id === openedRecord!.id ? openedRecord! : item));
+    imageSheet = undefined; render(true); return;
+  }
   if (form.id === 'case-form' && openedRecord) {
     event.preventDefault();
     const data = new FormData(form);
@@ -520,7 +580,20 @@ document.addEventListener('input', event => {
   }
 });
 
+// App interaction contract: scrolling and text editing remain available; zoom gestures do not.
+const blockZoom = (event: Event) => { if (event.cancelable) event.preventDefault(); };
+for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(type, blockZoom, { passive: false });
+}
+for (const type of ['touchstart', 'touchmove'] as const) {
+  document.addEventListener(type, event => {
+    if (event.touches.length > 1) { touchStart = undefined; blockZoom(event); }
+  }, { passive: false });
+}
+document.addEventListener('dblclick', blockZoom, { passive: false });
+
 document.addEventListener('touchstart', event => {
+  if (event.touches.length > 1) { touchStart = undefined; return; }
   const item = (event.target as HTMLElement).closest<HTMLElement>('[data-record-id]');
   const touch = event.touches[0];
   touchStart = item?.dataset.recordId && touch ? { id: item.dataset.recordId, x: touch.clientX, y: touch.clientY } : undefined;
@@ -566,3 +639,4 @@ if (import.meta.env.PROD && window.isSecureContext && 'serviceWorker' in navigat
   enableAppUpdates(() => state.page === 'entry' && !state.hidden && !timeEdited && !calendarSheet && !customPickCalendar &&
     !state.question && !state.pages.some(Boolean) && !state.coins.some(Boolean) && !picker.hasDraft());
 }
+

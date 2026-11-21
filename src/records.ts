@@ -2,7 +2,7 @@ import { calendarBranches, dayVoids, type ChartCalendar } from './domain';
 
 export const resultLabels = { pending: '待验', verified: '应验', unverified: '未应验' } as const;
 export type ResultStatus = keyof typeof resultLabels;
-export const methodLabels = { book: '书页', coins: '硬币', pick: '选卦', instant: '即时排盘' } as const;
+export const methodLabels = { book: '书页', coins: '硬币', pick: '选卦', image: '图片取卦', instant: '即时排盘' } as const;
 export type Method = keyof typeof methodLabels;
 export type RecordEntry = {
   id: string;
@@ -17,6 +17,8 @@ export type RecordEntry = {
   judgment?: string;
   result?: ResultStatus;
   calendar?: ChartCalendar;
+  image?: string;
+  imageNote?: string;
 };
 
 const key = 'liuyao.records.v1';
@@ -37,11 +39,19 @@ function isRecord(value: unknown): value is RecordEntry {
     (item.createdAt === undefined || typeof item.createdAt === 'string') &&
     (item.judgment === undefined || typeof item.judgment === 'string') &&
     (item.result === undefined || isResultStatus(item.result)) &&
+    (item.image === undefined || (item.method === 'image' && typeof item.image === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(item.image))) &&
+    (item.imageNote === undefined || (item.method === 'image' && typeof item.imageNote === 'string' && [...item.imageNote].length <= 60)) &&
     (item.calendar === undefined || (item.method === 'pick' && item.calendar &&
       (item.calendar.mode === 'current' || item.calendar.mode === 'custom') &&
       calendarBranches.includes(item.calendar.monthBranch) && Boolean(dayVoids(item.calendar.dayStem, item.calendar.dayBranch)))) &&
     Array.isArray(item.lines) && item.lines.length === 6 &&
     item.lines.every(line => line && typeof line.yang === 'boolean' && typeof line.moving === 'boolean');
+}
+
+export function recordTitle(item: RecordEntry): string {
+  if (item.method !== 'image') return item.question || '未填写所问何事';
+  const first = (item.imageNote ?? '').trim().split(/[，。；、：！？,.;:!?]/, 1)[0];
+  return [...first].slice(0, 20).join('') || '未填写取象笔记';
 }
 
 export function isResultStatus(value: unknown): value is ResultStatus {
