@@ -22,8 +22,27 @@ const standalone = index
 await writeFile(resolve(directory, '六爻排盘.html'), standalone, 'utf8');
 
 const template = await readFile('scripts/service-worker.js', 'utf8');
-const version = createHash('sha256').update(index).update(script).update(style).update(template).digest('hex').slice(0, 16);
-const files = ['./', scriptTag[1], styleTag[1], 'app.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+const manifest = JSON.parse(await readFile(resolve(directory, 'app.webmanifest'), 'utf8'));
+const iconFiles = await Promise.all(['./icon-180.png', ...manifest.icons.map(icon => icon.src)].map(async path => {
+  const bytes = await readFile(resolve(directory, path));
+  const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+  const versionedPath = path.replace(/\.png$/, `-${hash}.png`);
+  await writeFile(resolve(directory, versionedPath), bytes);
+  return versionedPath;
+}));
+manifest.icons.forEach((icon, index) => { icon.src = iconFiles[index + 1]; });
+const manifestJson = JSON.stringify(manifest, null, 2) + '\n';
+const brandedIndex = index.replace('./icon-180.png', iconFiles[0]);
+const version = createHash('sha256').update(brandedIndex).update(script).update(style)
+  .update(manifestJson).update(template).digest('hex').slice(0, 16);
+const shell = `app-shell-${version}.html`;
+const html = brandedIndex.replace('</head>', `  <meta name="app-version" content="${version}" />\n  </head>`);
+const files = [shell, scriptTag[1], styleTag[1], 'app.webmanifest', ...iconFiles];
+await Promise.all([
+  writeFile(resolve(directory, 'index.html'), html, 'utf8'),
+  writeFile(resolve(directory, shell), html, 'utf8'),
+  writeFile(resolve(directory, 'app.webmanifest'), manifestJson, 'utf8'),
+]);
 await writeFile(resolve(directory, 'sw.js'), template
-  .replace('__VERSION__', version)
+  .replaceAll('__VERSION__', version)
   .replace('__FILES__', JSON.stringify(files)), 'utf8');

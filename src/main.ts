@@ -2,6 +2,7 @@ import './styles.css';
 import { branchElement, castChart, instantLines, trigrams, type LineInput } from './domain';
 import { isResultStatus, makeBackup, methodLabels, readRecords, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
 import { makePicker } from './picker';
+import { enableAppUpdates } from './app-update';
 import { Solar } from 'lunar-javascript';
 
 type EntryMethod = Exclude<Method, 'instant'>;
@@ -466,6 +467,6 @@ render();
 
 if (import.meta.env.PROD && window.isSecureContext && 'serviceWorker' in navigator &&
     document.querySelector('link[rel="manifest"]')) {
-  navigator.serviceWorker.register(new URL('./sw.js', document.baseURI), { updateViaCache: 'none' })
-    .catch(error => console.warn('离线资源注册失败', error));
+  enableAppUpdates(() => state.page === 'entry' && !state.hidden && !timeEdited &&
+    !state.question && !state.pages.some(Boolean) && !state.coins.some(Boolean) && !picker.hasDraft());
 }

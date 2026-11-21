@@ -78,6 +78,7 @@ export function makePicker() {
 
   return {
     render, lines, search,
+    hasDraft: () => upper !== undefined || lower !== undefined || Boolean(query) || browseOpen,
     chooseUpper(index: number) { select(index, lower); },
     chooseLower(index: number) { select(upper, index); },
     chooseHex(u: number, l: number) { select(u, l); query = ''; browseOpen = false; },
