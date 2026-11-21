@@ -194,15 +194,16 @@ function renderRecords(): string {
     <header class="topbar chart-nav"><button id="records-back" aria-label="返回起卦">‹</button><h1>排盘记录</h1></header>
     <label class="card records-search"><i aria-hidden="true"></i><input id="records-search" type="search" aria-label="搜索所问、卦名或断语" placeholder="搜索所问、卦名或断语" value="${esc(recordSearch)}"></label>
     <div class="segmented records-tabs"><button data-record-filter="recent" aria-pressed="${recordFilter === 'recent'}" class="${recordFilter === 'recent' ? 'selected' : ''}">最近</button><button data-record-filter="favorite" aria-pressed="${recordFilter === 'favorite'}" class="${recordFilter === 'favorite' ? 'selected' : ''}">收藏</button></div>
+    <section class="card backup-card">
+      <button class="plain-action" id="export-backup" ${records.length ? '' : 'disabled aria-describedby="backup-empty"'}>导出备份</button>
+      <button class="plain-action" id="import-backup">导入备份</button>
+      <input type="file" id="backup-file" accept=".json,application/json" hidden>
+      ${records.length ? '' : '<p id="backup-empty">暂无记录可导出</p>'}
+      ${backupMessage ? `<p role="status">${esc(backupMessage)}</p>` : ''}
+    </section>
     ${storageFailed ? '<p role="status" class="hint">浏览器未能写入本机储存，本次更改仅保留在当前页面。</p>' : ''}
     <section class="card records-list" id="records-list">${recordsList()}</section>
     <p class="records-footer">点击记录查看排盘 · 点星标收藏 · 左滑可删除</p>
-    <section class="card backup-card">
-      <button class="plain-action" id="export-backup" ${records.length ? '' : 'disabled'}>导出备份</button>
-      <button class="plain-action" id="import-backup">导入备份</button>
-      <input type="file" id="backup-file" accept=".json,application/json" hidden>
-      ${backupMessage ? `<p role="status">${esc(backupMessage)}</p>` : ''}
-    </section>
   </main>`;
 }
 
