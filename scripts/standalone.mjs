@@ -23,7 +23,7 @@ await writeFile(resolve(directory, '六爻排盘.html'), standalone, 'utf8');
 
 const template = await readFile('scripts/service-worker.js', 'utf8');
 const version = createHash('sha256').update(index).update(script).update(style).update(template).digest('hex').slice(0, 16);
-const files = ['./', scriptTag[1], styleTag[1], 'app.webmanifest', 'icon-192.png', 'icon-512.png'];
+const files = ['./', scriptTag[1], styleTag[1], 'app.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 await writeFile(resolve(directory, 'sw.js'), template
   .replace('__VERSION__', version)
   .replace('__FILES__', JSON.stringify(files)), 'utf8');

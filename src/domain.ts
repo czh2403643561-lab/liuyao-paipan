@@ -26,9 +26,24 @@ const stemByTrigram: Record<string, string> = {乾:'甲',兑:'丁',离:'己',震
 const trigramByBits = new Map(trigrams.map(t => [t.lines.map(Number).join(''), t]));
 
 function trigram(lines: boolean[]): Trigram { return trigramByBits.get(lines.map(Number).join(''))!; }
-function solarPillars(date: string): PillarData {
+function lunarAt(date: string) {
   const [year, month, day, hour, minute] = date.split(/[-T:]/).map(Number);
-  const lunar = Solar.fromYmdHms(year, month, day, hour, minute, 0).getLunar();
+  return Solar.fromYmdHms(year, month, day, hour, minute, 0).getLunar();
+}
+
+export function instantLines(date: string): LineInput[] {
+  const lunar = lunarAt(date);
+  // getMonth() uses a negative number for a leap month, such as -6 for 闰六月.
+  const upperTotal = lunar.getYearZhiIndex() + 1 + Math.abs(lunar.getMonth()) + lunar.getDay();
+  const total = upperTotal + lunar.getTimeZhiIndex() + 1;
+  const upper = trigrams[(upperTotal % 8 || 8) - 1];
+  const lower = trigrams[(total % 8 || 8) - 1];
+  const movingAt = (total % 6 || 6) - 1;
+  return [...lower.lines, ...upper.lines].map((yang, index) => ({ yang, moving: index === movingAt }));
+}
+
+function solarPillars(date: string): PillarData {
+  const lunar = lunarAt(date);
   const y = lunar.getYearInGanZhiExact(); const m = lunar.getMonthInGanZhiExact();
   // Exact 口径在 23:00 换日，日柱和旬空必须使用同一口径。
   const d = lunar.getDayInGanZhiExact(); const h = lunar.getTimeInGanZhi();

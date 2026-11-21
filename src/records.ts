@@ -1,6 +1,6 @@
 export const resultLabels = { pending: '待验', verified: '应验', unverified: '未应验' } as const;
 export type ResultStatus = keyof typeof resultLabels;
-export const methodLabels = { book: '书页', coins: '硬币', pick: '选卦' } as const;
+export const methodLabels = { book: '书页', coins: '硬币', pick: '选卦', instant: '即时排盘' } as const;
 export type Method = keyof typeof methodLabels;
 export type RecordEntry = {
   id: string;
@@ -30,7 +30,7 @@ function isRecord(value: unknown): value is RecordEntry {
   return typeof item.id === 'string' && validRecordTime(item.time) &&
     typeof item.question === 'string' && typeof item.original === 'string' &&
     (item.transformed === null || typeof item.transformed === 'string') &&
-    (item.method === 'book' || item.method === 'coins' || item.method === 'pick') && typeof item.favorite === 'boolean' &&
+    typeof item.method === 'string' && Object.hasOwn(methodLabels, item.method) && typeof item.favorite === 'boolean' &&
     (item.createdAt === undefined || typeof item.createdAt === 'string') &&
     (item.judgment === undefined || typeof item.judgment === 'string') &&
     (item.result === undefined || isResultStatus(item.result)) &&

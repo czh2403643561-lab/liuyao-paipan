@@ -1,19 +1,21 @@
 import './styles.css';
-import { branchElement, castChart, trigrams, type LineInput } from './domain';
+import { branchElement, castChart, instantLines, trigrams, type LineInput } from './domain';
 import { isResultStatus, makeBackup, methodLabels, readRecords, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
 import { makePicker } from './picker';
+import { Solar } from 'lunar-javascript';
 
+type EntryMethod = Exclude<Method, 'instant'>;
 const lastMethod = safeGet('liuyao.method');
 const initialMethod = lastMethod === 'coins' || lastMethod === 'pick' ? lastMethod : 'book';
 const picker = makePicker();
-const state: { method: Method; page: 'entry'|'chart'|'records'; time: string; question: string; pages: [string,string]; coins: (LineInput|null)[]; active: number; chart?: ReturnType<typeof castChart>; mode: 'all'|'moving'; settings: boolean; hidden: boolean } = {
+const state: { method: EntryMethod; page: 'entry'|'chart'|'records'; time: string; question: string; pages: [string,string]; coins: (LineInput|null)[]; active: number; chart?: ReturnType<typeof castChart>; mode: 'all'|'moving'; settings: boolean; hidden: boolean } = {
   method: initialMethod, page: 'entry', time: currentTime(), question: '', pages: ['', ''], coins: Array(6).fill(null), active: 0,
   mode: safeGet('liuyao.transform') === 'all' ? 'all' : 'moving', settings: false, hidden: false,
 };
 
 let records = readRecords();
 let openedRecord: RecordEntry | undefined;
-let chartOrigin: 'entry' | 'records' = 'entry';
+let chartOrigin: 'entry' | 'records' | 'home-recent' = 'entry';
 let recordFilter: 'recent' | 'favorite' = 'recent';
 let recordSearch = '';
 let revealedRecord: string | undefined;
@@ -21,6 +23,7 @@ let storageFailed = false;
 let editingQuestion = false;
 let backupMessage = '';
 let touchStart: { id: string; x: number; y: number } | undefined;
+let suppressRecordClickUntil = 0;
 let timeEdited = false;
 
 function commitRecords(next: RecordEntry[]) {
@@ -47,6 +50,11 @@ function formatTime(value: string): string {
   const [year, month, day] = date.split('-').map(Number);
   return year + '年' + month + '月' + day + '日 ' + time;
 }
+function lunarCaption(value: string): string {
+  const [year, month, day, hour, minute] = value.split(/[-T:]/).map(Number);
+  const lunar = Solar.fromYmdHms(year, month, day, hour, minute, 0).getLunar();
+  return `${lunar.getYearInGanZhi()}年 ${lunar.getMonthInChinese()}月${lunar.getDayInChinese()} · ${lunar.getTimeZhi()}时`;
+}
 
 function validPage(value: string): boolean {
   return /^[0-9]+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0;
@@ -67,12 +75,24 @@ function renderEntry():string {
   const complete=state.coins.every(Boolean); const valid=state.pages.every(validPage);
   const step=state.active; const ordinal=['初爻','二爻','三爻','四爻','五爻','上爻'];
   const coinOptions=[{n:'3背',desc:'老阳',mark:'○',back:3,char:0,yang:true,moving:true},{n:'2背1字',desc:'少阳',mark:'━',back:2,char:1,yang:true,moving:false},{n:'1背2字',desc:'少阴',mark:'━ ━',back:1,char:2,yang:false,moving:false},{n:'3字',desc:'老阴',mark:'×',back:0,char:3,yang:false,moving:true}];
-  const header=`<header class="topbar chart-nav"><h1>六爻起卦</h1><button id="records-open" aria-label="排盘记录">☆</button></header><button class="card time-card" id="time-open"><span class="time-label">起卦时间</span><strong>${formatTime(state.time)}</strong><span class="chevron">›</span></button><input class="card question" id="question" maxlength="80" placeholder="所问何事（选填）" value="${esc(state.question)}"><div class="segmented"><button data-method="book" class="${state.method==='book'?'selected':''}">翻书页</button><button data-method="coins" class="${state.method==='coins'?'selected':''}">硬币</button><button data-method="pick" aria-pressed="${state.method==='pick'}" class="${state.method==='pick'?'selected':''}">选卦</button></div>`;
+  const header = `<header class="topbar home-nav"><button id="records-open" aria-label="收藏">收藏</button></header>
+    <div class="card time-card">
+      <button id="time-open" class="time-open">
+        <span class="time-label">起卦时间</span>
+        <span class="time-value"><strong>${formatTime(state.time)}</strong><small class="lunar-caption">${lunarCaption(state.time)}</small>${timeEdited ? '<span class="time-manual">已手动设时</span>' : ''}</span>
+        <span class="chevron" aria-hidden="true">›</span>
+      </button>
+      <button id="instant-cast" class="instant-button">即时排盘</button>
+    </div>
+    <input class="card question" id="question" maxlength="80" placeholder="所问何事（选填）" value="${esc(state.question)}">
+    <div class="segmented"><button data-method="book" class="${state.method==='book'?'selected':''}">翻书页</button><button data-method="coins" class="${state.method==='coins'?'selected':''}">硬币</button><button data-method="pick" aria-pressed="${state.method==='pick'}" class="${state.method==='pick'?'selected':''}">选卦</button></div>`;
   let body='';
-  if(state.method==='book') body=`<section class="card book-card"><label>第一次翻到的页数<input class="page-input" id="page1" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[0])}"></label><label>第二次翻到的页数<input class="page-input" id="page2" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[1])}"></label><p class="hint">随手翻，翻到多少填多少；大页数也可以输入。</p><p class="input-error" id="page-error" role="status">${state.pages.map(pageError).filter(Boolean).join("；")}</p></section><button class="primary" id="book-submit" ${valid?'':'disabled'}>确认起卦</button>`;
+  if(state.method==='book') body=`<section class="card book-card"><label>第一次翻到的页数<input class="page-input" id="page1" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[0])}"></label><label>第二次翻到的页数<input class="page-input" id="page2" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[1])}"></label><p class="hint">随手翻，按先后顺序填入页码</p><p class="input-error" id="page-error" role="status">${state.pages.map(pageError).filter(Boolean).join("；")}</p></section><button class="primary" id="book-submit" ${valid?'':'disabled'}>确认起卦</button>`;
   else if (state.method === "pick") body = picker.render(lineMark, esc);
   else body=`<section class="card cast-card"><div class="section-title"><strong>${step===6?"六爻已录齐":"第"+(step+1)+"次 · "+ordinal[step]}</strong><span>${step===6?"6/6 已录入":"当前第"+(step+1)+"步 · 已录"+state.coins.filter(Boolean).length+"爻"}</span></div><div class="options" ${step===6?"hidden":""}>${coinOptions.map((o,i)=>`<button class="option" data-option="${i}"><span class="coins">${Array.from({length:3},(_,j)=>`<i class="coin ${j<o.back?'back':''}">${j<o.back?'':'字'}</i>`).join('')}</span><b>${o.n}</b><small>${o.desc} <em>${o.mark}</em> ${o.moving?'动':'静'}</small></button>`).join('')}</div></section><section class="card preview"><div class="section-title"><strong>已录入</strong><button id="previous" ${step===0?'disabled':''}>上一步</button></div>${[5,4,3,2,1,0].map(i=>{const l=state.coins[i];return `<button class="preview-row" data-line="${i}" ${l?"":"disabled"}><span>${ordinal[i]}</span>${l?lineMark(l.yang):'<span class="placeholder">—</span>'}<span class="preview-state">${l?(l.moving?`${l.yang?'○':'×'} 动`:'静'):' '}</span><span class="chevron">${l?'›':''}</span></button>`}).join('')}</section><button class="primary" id="coin-submit" ${complete?'':'disabled'}>装卦排盘</button>`;
-  return `<main class="shell">${header}${body}</main>${state.hidden?`<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>起卦时间</h2><label>日期与时间<input id="time-picker" type="datetime-local" required min="1900-01-01T00:00" max="2100-12-31T23:59" value="${state.time}"></label><button class="primary" id="time-done">完成</button></section></div>`:''}`;
+  const recent = records.slice().sort((a, b) => (b.createdAt ?? b.time).localeCompare(a.createdAt ?? a.time)).slice(0, 3);
+  const recentList = recent.length ? `<section class="recent"><div class="recent-heading"><span>最 近</span><button id="all-records">全部记录 ›</button></div>${recent.map(item => `<button class="recent-item" data-record-open="${esc(item.id)}" data-record-origin="home"><span class="recent-dot" aria-hidden="true"></span><span><strong>${esc(item.question || '未填写所问何事')}</strong><small>${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ''} · ${methodLabels[item.method]}</small></span><time>${formatTime(item.time)}</time></button>`).join('')}</section>` : '';
+  return `<main class="shell">${header}${body}${recentList}</main>${state.hidden?`<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>起卦时间</h2><label>日期与时间<input id="time-picker" type="datetime-local" required min="1900-01-01T00:00" max="2100-12-31T23:59" value="${state.time}"></label><button class="primary" id="time-done">完成</button></section></div>`:''}`;
 }
 function renderChart(): string {
   const chart = state.chart!;
@@ -102,8 +122,7 @@ function renderChart(): string {
         ? '<span class="pan-return ke">← 回头克</span>'
         : '';
     return `<div class="pan-row pan-${side}" data-position="${index + 1}">
-      <div class="pan-meta ${changed ? 'pan-change-meta' : ''}">${changed ? relation : rowNames[index] + ' · ' + chart.dateGods[index]}</div>
-      <div class="pan-data">${lineMark(line.yang)}${najia(line)}<span class="pan-badges">${badge}${empty}</span></div>
+      <div class="pan-data"><span class="pan-meta ${changed ? 'pan-change-meta' : ''}">${changed ? relation : rowNames[index][0] + '·' + chart.dateGods[index]}</span>${lineMark(line.yang)}${najia(line)}<span class="pan-badges">${badge}${empty}</span></div>
     </div>`;
   }
 
@@ -120,7 +139,7 @@ function renderChart(): string {
   const hiddenDetail = hidden.map(({index, line}) =>
     `<div>本卦六亲缺${line.relative}，伏神${najia(line)}，伏于${rowNames[index]}${najia(chart.lines1[index])}之下。</div>`).join('');
 
-  return `<header class="topbar chart-nav pan-nav"><button id="back" aria-label="${chartOrigin === 'entry' ? '返回起卦' : '返回记录'}">‹</button><h1>六爻排盘</h1><button id="settings" aria-label="设置">⚙</button></header>
+  return `<header class="topbar chart-nav pan-nav"><button id="back" aria-label="${chartOrigin === 'entry' ? '返回起卦' : '返回记录'}">‹</button><h1>观爻</h1><button id="settings" aria-label="设置">⚙</button></header>
   <main class="shell pan-shell">
     <section class="card pan-time"><div class="pan-date">${date}</div><div class="pan-pillars">${calendar}</div></section>
     ${editingQuestion
@@ -153,12 +172,11 @@ function renderChart(): string {
 function renderCase(entry: RecordEntry): string {
   const status = entry.result ?? 'pending';
   return `<form class="card case-form" id="case-form">
-    <label for="judgment">我的断语</label>
+    <div class="judgment-heading"><label for="judgment">我的断语</label><span id="judgment-status" role="status" hidden>有更新</span><button class="primary" type="submit">保存断语</button></div>
     <textarea id="judgment" name="judgment" rows="4" placeholder="写下你的判断，方便日后回看">${esc(entry.judgment ?? '')}</textarea>
     <label for="case-result">应验状态</label>
     <select id="case-result" name="result">${Object.entries(resultLabels).map(([value, label]) =>
       `<option value="${value}" ${value === status ? 'selected' : ''}>${label}</option>`).join('')}</select>
-    <button class="primary" type="submit">保存案例</button>
   </form>`;
 }
 
@@ -169,29 +187,31 @@ function recordsList(): string {
     .filter(item => [item.question, item.original, item.transformed, item.judgment].some(text => text?.toLowerCase().includes(query)))
     .sort((a, b) => (b.createdAt ?? b.time).localeCompare(a.createdAt ?? a.time));
   if (!matches.length) {
-    return '<p class="records-empty">' + (query ? '未找到符合条件的记录' : recordFilter === 'favorite' ? '暂无收藏' : '暂无排盘记录') + '</p>';
+    return '<p class="records-empty">' + (query ? '未找到符合条件的记录' : recordFilter === 'favorite' ? '暂无收藏，去最近记录点「收藏」即可添加' : '暂无排盘记录') + '</p>';
   }
   return matches.map(item => {
     const id = esc(item.id);
     const same = records.filter(other => other.id !== item.id && other.time === item.time && other.question === item.question && other.original === item.original && other.transformed === item.transformed);
     const repeat = same.length ? ` · 同刻第${same.filter(other => (other.createdAt ?? other.id) < (item.createdAt ?? item.id)).length + 1}次` : '';
-    return `<article class="record-item" data-record-id="${id}">
+    const revealed = revealedRecord === item.id;
+    return `<article class="record-item${revealed ? ' delete-revealed' : ''}" data-record-id="${id}">
       <button class="record-open" data-record-open="${id}">
         <strong>${esc(item.question || '未填写所问何事')}</strong>
         <span class="record-names">${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ' · 静卦'}</span>
-        <span class="record-meta">${formatTime(item.time)}${repeat}${item.createdAt ? ` · 存于 ${new Date(item.createdAt).toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}` : ""} · <small>${methodLabels[item.method]}</small></span>
+        <span class="record-meta"><time>${item.time.replace('T', ' ')}</time><small>${methodLabels[item.method]}</small></span>
+        ${repeat || item.createdAt ? `<span class="record-save-meta">${repeat.replace(/^ · /, '')}${repeat && item.createdAt ? ' · ' : ''}${item.createdAt ? `存于 ${new Date(item.createdAt).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}` : ''}</span>` : ''}
         ${item.judgment || item.result ? `<span class="case-summary">${resultLabels[item.result ?? 'pending']}${item.judgment ? ' · ' + esc(item.judgment) : ''}</span>` : ''}
         <span class="record-arrow" aria-hidden="true">›</span>
       </button>
-      <button class="record-star" data-record-star="${id}" aria-pressed="${item.favorite}" aria-label="${item.favorite ? '取消收藏' : '收藏'}">${item.favorite ? '★' : '☆'}</button>
-      <button class="record-delete" data-record-delete="${id}" ${revealedRecord === item.id ? '' : 'hidden'}>删除</button>
+      <button class="record-star" data-record-star="${id}" aria-pressed="${item.favorite}" aria-label="${item.favorite ? '取消收藏' : '收藏'}" ${revealed ? 'disabled' : ''}>${item.favorite ? '已收藏' : '收藏'}</button>
+      <button class="record-delete" data-record-delete="${id}" aria-hidden="${!revealed}" tabindex="${revealed ? 0 : -1}">删除</button>
     </article>`;
   }).join('');
 }
 
 function renderRecords(): string {
   return `<main class="shell records-shell">
-    <header class="topbar chart-nav"><button id="records-back" aria-label="返回起卦">‹</button><h1>排盘记录</h1></header>
+    <header class="topbar chart-nav"><button id="records-back" aria-label="返回起卦">‹</button><h1>记录</h1></header>
     <label class="card records-search"><i aria-hidden="true"></i><input id="records-search" type="search" aria-label="搜索所问、卦名或断语" placeholder="搜索所问、卦名或断语" value="${esc(recordSearch)}"></label>
     <div class="segmented records-tabs"><button data-record-filter="recent" aria-pressed="${recordFilter === 'recent'}" class="${recordFilter === 'recent' ? 'selected' : ''}">最近</button><button data-record-filter="favorite" aria-pressed="${recordFilter === 'favorite'}" class="${recordFilter === 'favorite' ? 'selected' : ''}">收藏</button></div>
     <section class="card backup-card">
@@ -203,7 +223,7 @@ function renderRecords(): string {
     </section>
     ${storageFailed ? '<p role="status" class="hint">浏览器未能写入本机储存，本次更改仅保留在当前页面。</p>' : ''}
     <section class="card records-list" id="records-list">${recordsList()}</section>
-    <p class="records-footer">点击记录查看排盘 · 点星标收藏 · 左滑可删除</p>
+    <p class="records-footer">点击记录查看排盘 · 点「收藏」保存 · 左滑可删除</p>
   </main>`;
 }
 
@@ -213,12 +233,13 @@ function render() {
   document.querySelector<HTMLDivElement>('#app')!.innerHTML = state.page === 'entry' ? renderEntry() : state.page === 'chart' ? renderChart() : renderRecords();
 }
 
-function submit(lines: LineInput[]) {
+function submit(entry: LineInput[] | 'instant') {
   if (!timeEdited) state.time = currentTime();
+  const lines = entry === 'instant' ? instantLines(state.time) : entry;
   const chart = castChart(lines, state.time);
   openedRecord = {
     id: globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36) + Math.random().toString(36).slice(2),
-    time: state.time, question: state.question.trim(), method: state.method,
+    time: state.time, question: state.question.trim(), method: entry === 'instant' ? 'instant' : state.method,
     lines: lines.map(line => ({ ...line })), original: chart.name,
     transformed: lines.some(line => line.moving) ? chart.changedName : null, favorite: false, createdAt: new Date().toISOString(),
   };
@@ -240,10 +261,12 @@ document.addEventListener('click',event=>{
   const element = event.target as HTMLElement;
   if (element.id === 'scrim') { state.settings = false; state.hidden = false; render(); return; }
   const target=element.closest<HTMLElement>('button');if(!target)return;
+  if (Date.now() < suppressRecordClickUntil && target.closest('[data-record-id]')) { event.preventDefault(); return; }
   if (target.id === 'records-open') {
-    state.page = 'records'; recordFilter = 'recent'; recordSearch = ''; revealedRecord = undefined;
+    state.page = 'records'; recordFilter = 'favorite'; recordSearch = ''; revealedRecord = undefined;
     render(); window.scrollTo(0, 0); return;
   }
+  if (target.id === 'all-records') { state.page = 'records'; recordFilter = 'recent'; recordSearch = ''; render(); window.scrollTo(0, 0); return; }
   if (target.id === 'records-back') { state.page = 'entry'; render(); window.scrollTo(0, 0); return; }
   if (target.id === 'export-backup') {
     const url = URL.createObjectURL(new Blob([makeBackup(records)], { type: 'application/json' }));
@@ -266,7 +289,7 @@ document.addEventListener('click',event=>{
     if (entry) {
       openedRecord = entry;
       state.chart = castChart(entry.lines, entry.time);
-      chartOrigin = 'records';
+      chartOrigin = target.dataset.recordOrigin === 'home' ? 'home-recent' : 'records';
       showChart();
     }
     return;
@@ -305,7 +328,8 @@ document.addEventListener('click',event=>{
     if (lines) submit(lines);
     return;
   }
-  if(target.dataset.method){state.method=target.dataset.method as Method;safeSet('liuyao.method',state.method);render();return;}
+  if(target.dataset.method){state.method=target.dataset.method as EntryMethod;safeSet('liuyao.method',state.method);render();return;}
+  if (target.id === 'instant-cast') { submit('instant'); return; }
   if(target.id==='time-open'){if(!timeEdited)state.time=currentTime();state.hidden=true;render();return;}
   if(target.id==='time-done'){const input=document.querySelector<HTMLInputElement>('#time-picker');if(!input?.value || !input.reportValidity())return;timeEdited=timeEdited||input.value!==state.time;state.time=input.value;state.hidden=false;render();return;}
   if(target.id==='book-submit'){
@@ -317,7 +341,7 @@ document.addEventListener('click',event=>{
   if(target.dataset.line!==undefined){const i=Number(target.dataset.line);if(state.coins[i]){state.active=i;render();}return;}
   if(target.id==='previous'){if(state.active>0)state.active--;render();return;}
   if(target.id==='coin-submit'){if(state.coins.every(Boolean))submit(state.coins as LineInput[]);return;}
-  if(target.id==='back'){if(chartOrigin==='entry') resetEntry(); else {state.page='records';state.hidden=false;}render();window.scrollTo(0,0);return;}
+  if(target.id==='back'){if(chartOrigin==='entry') resetEntry(); else {state.page=chartOrigin==='records'?'records':'entry';state.hidden=false;}render();window.scrollTo(0,0);return;}
   if(target.id==='settings'){state.settings=true;render();return;}
   if(target.id==='settings-done'||target.id==='scrim'){state.settings=false;render();return;}
   if(target.dataset.mode){state.mode=target.dataset.mode as 'all'|'moving';safeSet('liuyao.transform',state.mode);render();return;}
@@ -373,8 +397,9 @@ document.addEventListener('submit', event => {
     const updated = { ...openedRecord, judgment: String(data.get('judgment') ?? '').trim(), result };
     commitRecords(records.map(item => item.id === updated.id ? updated : item));
     openedRecord = updated;
-    const save = form.querySelector<HTMLButtonElement>('button')!;
+    const save = form.querySelector<HTMLButtonElement>('.judgment-heading button')!;
     save.textContent = storageFailed ? '本机保存失败' : '已保存';
+    form.querySelector<HTMLElement>('#judgment-status')!.hidden = true;
     return;
   }
   if ((event.target as HTMLElement).id !== 'note-form' || !openedRecord) return;
@@ -388,12 +413,35 @@ document.addEventListener('submit', event => {
   render();
 });
 
+document.addEventListener('input', event => {
+  const target = event.target as HTMLElement;
+  if ((target.id === 'judgment' || target.id === 'case-result') && openedRecord) {
+    const status = document.querySelector<HTMLElement>('#judgment-status');
+    if (status) status.hidden = false;
+    const save = document.querySelector<HTMLButtonElement>('.judgment-heading button');
+    if (save) save.textContent = '保存断语';
+  }
+});
+
 document.addEventListener('touchstart', event => {
   const item = (event.target as HTMLElement).closest<HTMLElement>('[data-record-id]');
   const touch = event.touches[0];
   touchStart = item?.dataset.recordId && touch ? { id: item.dataset.recordId, x: touch.clientX, y: touch.clientY } : undefined;
 }, { passive: true });
 
+function revealRecordDelete(id?: string) {
+  revealedRecord = id;
+  document.querySelectorAll<HTMLElement>('[data-record-id]').forEach(item => {
+    const revealed = item.dataset.recordId === id;
+    item.classList.toggle('delete-revealed', revealed);
+    item.querySelector<HTMLButtonElement>('.record-star')!.disabled = revealed;
+    const remove = item.querySelector<HTMLButtonElement>('.record-delete')!;
+    remove.setAttribute('aria-hidden', String(!revealed));
+    remove.tabIndex = revealed ? 0 : -1;
+  });
+}
+
+document.addEventListener('touchcancel', () => { touchStart = undefined; });
 document.addEventListener('touchend', event => {
   const start = touchStart;
   touchStart = undefined;
@@ -403,16 +451,15 @@ document.addEventListener('touchend', event => {
   const dy = touch.clientY - start.y;
   if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
   if (event.cancelable) event.preventDefault();
-  revealedRecord = dx < 0 ? start.id : undefined;
-  document.getElementById('records-list')!.innerHTML = recordsList();
+  suppressRecordClickUntil = Date.now() + 350;
+  revealRecordDelete(dx < 0 ? start.id : undefined);
 }, { passive: false });
 
 document.addEventListener('contextmenu', event => {
   const item = (event.target as HTMLElement).closest<HTMLElement>('[data-record-id]');
   if (!item) return;
   event.preventDefault();
-  revealedRecord = item.dataset.recordId;
-  document.getElementById('records-list')!.innerHTML = recordsList();
+  revealRecordDelete(item.dataset.recordId);
 });
 
 render();
