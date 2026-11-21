@@ -1,3 +1,5 @@
+import { calendarBranches, dayVoids, type ChartCalendar } from './domain';
+
 export const resultLabels = { pending: '待验', verified: '应验', unverified: '未应验' } as const;
 export type ResultStatus = keyof typeof resultLabels;
 export const methodLabels = { book: '书页', coins: '硬币', pick: '选卦', instant: '即时排盘' } as const;
@@ -14,6 +16,7 @@ export type RecordEntry = {
   createdAt?: string;
   judgment?: string;
   result?: ResultStatus;
+  calendar?: ChartCalendar;
 };
 
 const key = 'liuyao.records.v1';
@@ -34,6 +37,9 @@ function isRecord(value: unknown): value is RecordEntry {
     (item.createdAt === undefined || typeof item.createdAt === 'string') &&
     (item.judgment === undefined || typeof item.judgment === 'string') &&
     (item.result === undefined || isResultStatus(item.result)) &&
+    (item.calendar === undefined || (item.method === 'pick' && item.calendar &&
+      (item.calendar.mode === 'current' || item.calendar.mode === 'custom') &&
+      calendarBranches.includes(item.calendar.monthBranch) && Boolean(dayVoids(item.calendar.dayStem, item.calendar.dayBranch)))) &&
     Array.isArray(item.lines) && item.lines.length === 6 &&
     item.lines.every(line => line && typeof line.yang === 'boolean' && typeof line.moving === 'boolean');
 }

@@ -32,7 +32,7 @@ export function makePicker() {
     return names(catalog.filter(item => item.name.includes(term))) || '<p class="hint">没有找到匹配的卦名。</p>';
   }
 
-  function render(lineMark: (yang: boolean) => string, esc: (value: string) => string) {
+  function render(lineMark: (yang: boolean) => string, esc: (value: string) => string, calendarCard: string) {
     const grid = (side: 'upper' | 'lower', label: string, selected: number | undefined) => `
       <section class="card pick-card">
         <h2>${label}</h2>
@@ -67,6 +67,7 @@ export function makePicker() {
       ${grid('upper', '上卦', upper)}${grid('lower', '下卦', lower)}
       <section class="card pick-card picked-preview">${preview}</section>
       ${movingCard}
+      ${calendarCard}
       <button type="button" class="primary" id="pick-submit" ${picked ? '' : 'disabled'}>装卦排盘</button>
       <details class="card pick-card" id="hex-catalog" ${browseOpen ? 'open' : ''}>
         <summary>全部 64 卦（按八宫浏览）</summary>

@@ -1,8 +1,10 @@
 import './styles.css';
-import { branchElement, castChart, instantLines, trigrams, type LineInput } from './domain';
+import { branchElement, castChart, dayVoids, instantLines, trigrams, type ChartCalendar, type LineInput } from './domain';
 import { isResultStatus, makeBackup, methodLabels, readRecords, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
 import { makePicker } from './picker';
 import { enableAppUpdates } from './app-update';
+import { nayinName } from './nayin';
+import { currentCalendar, renderCalendarSheet, renderPickCalendar, type CalendarField, type CalendarSheet } from './pick-calendar';
 import { Solar } from 'lunar-javascript';
 
 type EntryMethod = Exclude<Method, 'instant'>;
@@ -26,6 +28,16 @@ let backupMessage = '';
 let touchStart: { id: string; x: number; y: number } | undefined;
 let suppressRecordClickUntil = 0;
 let timeEdited = false;
+let showNayin = safeGet('liuyao.showNayin') !== 'off';
+let customPickCalendar: ChartCalendar | undefined;
+let calendarSheet: CalendarSheet | undefined;
+let animateCalendarSheet = false;
+let flashCalendar = false;
+
+function pickDate() { return timeEdited ? state.time : currentTime(); }
+function activeCalendar() {
+  return (state.page === 'chart' ? openedRecord?.calendar : customPickCalendar) ?? currentCalendar(pickDate());
+}
 
 function commitRecords(next: RecordEntry[]) {
   storageFailed = !writeRecords(next);
@@ -68,6 +80,7 @@ function pageError(value: string): string {
 }
 function resetEntry() {
   picker.reset();
+  customPickCalendar = undefined;
   state.page = 'entry'; state.pages = ['', '']; state.coins = Array(6).fill(null);
   state.active = 0; state.time = currentTime(); state.question = ''; timeEdited = false;
   state.hidden = false; openedRecord = undefined;
@@ -89,7 +102,11 @@ function renderEntry():string {
     <div class="segmented"><button data-method="book" class="${state.method==='book'?'selected':''}">翻书页</button><button data-method="coins" class="${state.method==='coins'?'selected':''}">硬币</button><button data-method="pick" aria-pressed="${state.method==='pick'}" class="${state.method==='pick'?'selected':''}">选卦</button></div>`;
   let body='';
   if(state.method==='book') body=`<section class="card book-card"><label>第一次翻到的页数<input class="page-input" id="page1" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[0])}"></label><label>第二次翻到的页数<input class="page-input" id="page2" type="text" inputmode="numeric" pattern="[0-9]*" value="${esc(state.pages[1])}"></label><p class="hint">随手翻，按先后顺序填入页码</p><p class="input-error" id="page-error" role="status">${state.pages.map(pageError).filter(Boolean).join("；")}</p></section><button class="primary" id="book-submit" ${valid?'':'disabled'}>确认起卦</button>`;
-  else if (state.method === "pick") body = picker.render(lineMark, esc);
+  else if (state.method === "pick") {
+    const date = pickDate();
+    const dateCaption = formatTime(date).split(' ')[0] + (date.slice(0, 10) === currentTime().slice(0, 10) ? ' · 今天' : ' · 已手动设时');
+    body = picker.render(lineMark, esc, renderPickCalendar(customPickCalendar ?? currentCalendar(date), dateCaption, flashCalendar));
+  }
   else body=`<section class="card cast-card"><div class="section-title"><strong>${step===6?"六爻已录齐":"第"+(step+1)+"次 · "+ordinal[step]}</strong><span>${step===6?"6/6 已录入":"当前第"+(step+1)+"步 · 已录"+state.coins.filter(Boolean).length+"爻"}</span></div><div class="options" ${step===6?"hidden":""}>${coinOptions.map((o,i)=>`<button class="option" data-option="${i}"><span class="coins">${Array.from({length:3},(_,j)=>`<i class="coin ${j<o.back?'back':''}">${j<o.back?'':'字'}</i>`).join('')}</span><b>${o.n}</b><small>${o.desc} <em>${o.mark}</em> ${o.moving?'动':'静'}</small></button>`).join('')}</div></section><section class="card preview"><div class="section-title"><strong>已录入</strong><button id="previous" ${step===0?'disabled':''}>上一步</button></div>${[5,4,3,2,1,0].map(i=>{const l=state.coins[i];return `<button class="preview-row" data-line="${i}" ${l?"":"disabled"}><span>${ordinal[i]}</span>${l?lineMark(l.yang):'<span class="placeholder">—</span>'}<span class="preview-state">${l?(l.moving?`${l.yang?'○':'×'} 动`:'静'):' '}</span><span class="chevron">${l?'›':''}</span></button>`}).join('')}</section><button class="primary" id="coin-submit" ${complete?'':'disabled'}>装卦排盘</button>`;
   const recent = records.slice().sort((a, b) => (b.createdAt ?? b.time).localeCompare(a.createdAt ?? a.time)).slice(0, 3);
   const recentList = recent.length ? `<section class="recent"><div class="recent-heading"><span>最 近</span><button id="all-records">全部记录 ›</button></div>${recent.map(item => `<button class="recent-item" data-record-open="${esc(item.id)}" data-record-origin="home"><span class="recent-dot" aria-hidden="true"></span><span><strong>${esc(item.question || '未填写所问何事')}</strong><small>${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ''} · ${methodLabels[item.method]}</small></span><time>${formatTime(item.time)}</time></button>`).join('')}</section>` : '';
@@ -122,12 +139,17 @@ function renderChart(): string {
       : changed && isMoving && overcomes[line.element] === originalElement
         ? '<span class="pan-return ke">← 回头克</span>'
         : '';
+    const nayin = showNayin ? nayinName(line.stem, line.branch) : undefined;
+    const lineText = nayin
+      ? `<span class="pan-line-text">${najia(line)}<small class="pan-nayin">纳音 ${nayin}</small></span>`
+      : najia(line);
     return `<div class="pan-row pan-${side}" data-position="${index + 1}">
-      <div class="pan-data"><span class="pan-meta ${changed ? 'pan-change-meta' : ''}">${changed ? relation : rowNames[index][0] + '·' + chart.dateGods[index]}</span>${lineMark(line.yang)}${najia(line)}<span class="pan-badges">${badge}${empty}</span></div>
+      <div class="pan-data"><span class="pan-meta ${changed ? 'pan-change-meta' : ''}">${changed ? relation : rowNames[index][0] + '·' + chart.dateGods[index]}</span>${lineMark(line.yang)}${lineText}<span class="pan-badges">${badge}${empty}</span></div>
     </div>`;
   }
 
   const palace = chart.palace.palace;
+  const customCalendar = openedRecord?.calendar?.mode === 'custom';
   const date = formatTime(openedRecord?.time ?? state.time);
   const question = openedRecord?.question ?? state.question;
   const pillars = [['年', chart.pillars.year], ['月', chart.pillars.month], ['日', chart.pillars.day], ['时', chart.pillars.hour]];
@@ -142,17 +164,17 @@ function renderChart(): string {
 
   return `<header class="topbar chart-nav pan-nav"><button id="back" aria-label="${chartOrigin === 'entry' ? '返回起卦' : '返回记录'}">‹</button><h1>观爻</h1><button id="settings" aria-label="设置">⚙</button></header>
   <main class="shell pan-shell">
-    <section class="card pan-time"><div class="pan-date">${date}</div><div class="pan-pillars">${calendar}</div></section>
+    ${customCalendar ? '' : `<section class="card pan-time"><div class="pan-date">${date}</div><div class="pan-pillars">${calendar}</div></section>`}
     ${editingQuestion
       ? `<form id="note-form" class="card chart-question note-form"><label for="note-input">所问何事</label><input id="note-input" maxlength="80" value="${esc(question)}"><button class="primary" type="submit">保存备注</button></form>`
       : `<button class="card chart-question" id="edit-note"><span class="pan-question ${question ? '' : 'muted'}">${esc(question || '添加所问何事')}</span><span>编辑</span></button>`}
     <section class="card pan-month" aria-label="月建日辰旬空">
-      <div><small>月建</small><b>${branchText(chart.pillars.monthBranch)}</b></div>
-      <div><small>日辰</small><b>${branchText(chart.pillars.dayBranch)}</b></div>
+      <div>${customCalendar ? `<button type="button" data-calendar-field="month"><small>月建</small><b>${branchText(chart.pillars.monthBranch)}</b><span aria-hidden="true">▾</span></button>` : `<small>月建</small><b>${branchText(chart.pillars.monthBranch)}</b>`}</div>
+      <div>${customCalendar ? `<button type="button" data-calendar-field="day"><small>日辰</small><b>${branchText(chart.pillars.day)}</b><span aria-hidden="true">▾</span></button>` : `<small>日辰</small><b>${branchText(chart.pillars.dayBranch)}</b>`}</div>
       <div><small>旬空</small><strong class="pan-chip kong">${chart.pillars.voids.join('')}</strong></div>
     </section>
     ${storageFailed ? '<p role="status" class="hint">浏览器未能写入本机储存，本次记录仅保留在当前页面。</p>' : ''}
-    <section class="card pan-grid" aria-label="卦盘">
+    <section class="card pan-grid${showNayin ? ' pan-with-nayin' : ''}" aria-label="卦盘">
       <div class="pan-head pan-main"><div class="pan-label">本卦</div><h2>${chart.name}</h2><span class="pan-palace el-${palace.element}">${palace.name}宫 · ${palace.element}</span></div>
       <div class="pan-head pan-change"><div class="pan-label">变卦</div>
         ${isStatic ? '' : `<h2>${chart.changedName}</h2><button id="quick-mode" class="pan-mode" aria-label="变卦显示：${state.mode === 'all' ? '全部' : '仅动爻'}">${state.mode === 'all' ? '全部' : '仅动爻'}</button>`}
@@ -168,7 +190,9 @@ function renderChart(): string {
     </section>
     <button class="primary restart" id="restart">重新起卦</button>${openedRecord ? renderCase(openedRecord) : ''}
   </main>
-  ${state.settings ? `<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>设置</h2><p>变卦显示</p><div class="segmented"><button data-mode="all" class="${state.mode==='all'?'selected':''}">全部显示</button><button data-mode="moving" class="${state.mode==='moving'?'selected':''}">仅动爻</button></div><button class="plain-action" id="settings-done">完成</button></section></div>` : ''}`;
+  ${state.settings ? `<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>设置</h2><p>变卦显示</p><div class="segmented"><button data-mode="all" class="${state.mode==='all'?'selected':''}">全部显示</button><button data-mode="moving" class="${state.mode==='moving'?'selected':''}">仅动爻</button></div>
+    <div class="nayin-setting"><div><strong id="nayin-setting-label">显示纳音</strong><p class="hint" id="nayin-setting-hint">每爻纳甲下方的小字纳音名</p></div><button type="button" id="nayin-toggle" role="switch" aria-checked="${showNayin}" aria-labelledby="nayin-setting-label" aria-describedby="nayin-setting-hint"></button></div>
+    <button class="plain-action" id="settings-done">完成</button></section></div>` : ''}`;
 }
 function renderCase(entry: RecordEntry): string {
   const status = entry.result ?? 'pending';
@@ -228,26 +252,77 @@ function renderRecords(): string {
   </main>`;
 }
 
-function render() {
+function render(preserveChartForms = false) {
   document.body.classList.toggle('pan-page', state.page === 'chart');
   document.body.classList.toggle('records-page', state.page === 'records');
-  document.querySelector<HTMLDivElement>('#app')!.innerHTML = state.page === 'entry' ? renderEntry() : state.page === 'chart' ? renderChart() : renderRecords();
+  const app = document.querySelector<HTMLDivElement>('#app')!;
+  const forms = preserveChartForms && state.page === 'chart' ? [...app.querySelectorAll<HTMLFormElement>('#case-form, #note-form')] : [];
+  const page = state.page === 'entry' ? renderEntry() : state.page === 'chart' ? renderChart() : renderRecords();
+  app.innerHTML = page + (calendarSheet ? renderCalendarSheet(calendarSheet, activeCalendar(), animateCalendarSheet) : '');
+  for (const form of forms) app.querySelector(`#${form.id}`)?.replaceWith(form);
+  if (calendarSheet) {
+    for (const section of app.querySelectorAll<HTMLElement>(':scope > main, :scope > header')) section.inert = true;
+  }
+  animateCalendarSheet = false;
+  flashCalendar = false;
 }
 
-function submit(entry: LineInput[] | 'instant') {
+function submit(entry: LineInput[] | 'instant', isPick = false) {
   if (!timeEdited) state.time = currentTime();
   const lines = entry === 'instant' ? instantLines(state.time) : entry;
-  const chart = castChart(lines, state.time);
+  const calendar = isPick ? customPickCalendar ?? currentCalendar(state.time) : undefined;
+  const chart = castChart(lines, state.time, calendar);
   openedRecord = {
     id: globalThis.crypto?.randomUUID?.() ?? Date.now().toString(36) + Math.random().toString(36).slice(2),
     time: state.time, question: state.question.trim(), method: entry === 'instant' ? 'instant' : state.method,
     lines: lines.map(line => ({ ...line })), original: chart.name,
     transformed: lines.some(line => line.moving) ? chart.changedName : null, favorite: false, createdAt: new Date().toISOString(),
+    ...(calendar ? { calendar } : {}),
   };
   commitRecords([openedRecord, ...records]);
   state.chart = chart;
   chartOrigin = 'entry';
   showChart();
+}
+
+function closeCalendarSheet() {
+  const field = calendarSheet?.field;
+  calendarSheet = undefined;
+  render(true);
+  document.querySelector<HTMLElement>(`[data-calendar-field="${field}"]`)?.focus({ preventScroll: true });
+}
+
+function applyCalendar(calendar: ChartCalendar) {
+  if (state.page === 'entry') {
+    customPickCalendar = calendar;
+  } else if (openedRecord) {
+    const updated = { ...openedRecord, calendar };
+    commitRecords(records.map(item => item.id === updated.id ? updated : item));
+    openedRecord = updated;
+    state.chart = castChart(updated.lines, updated.time, calendar);
+  }
+}
+
+function chooseCalendarValue(stem?: string, branch?: string) {
+  const sheet = calendarSheet;
+  if (!sheet) return;
+  const calendar = { ...activeCalendar(), mode: 'custom' as const };
+  if (sheet.field === 'month' && branch) {
+    applyCalendar({ ...calendar, monthBranch: branch });
+    closeCalendarSheet();
+    return;
+  }
+  if (stem) sheet.dayStem = stem;
+  if (branch) sheet.dayBranch = branch;
+  const dayStem = sheet.dayStem ?? calendar.dayStem;
+  const dayBranch = sheet.dayBranch ?? calendar.dayBranch;
+  if (dayVoids(dayStem, dayBranch)) {
+    applyCalendar({ ...calendar, dayStem, dayBranch });
+    if (sheet.dayStem && sheet.dayBranch) { closeCalendarSheet(); return; }
+  }
+  render(true);
+  const selector = stem ? `[data-calendar-stem="${stem}"]` : `[data-calendar-branch="${branch}"]`;
+  document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
 }
 
 function showChart() {
@@ -260,8 +335,22 @@ function showChart() {
 }
 document.addEventListener('click',event=>{
   const element = event.target as HTMLElement;
-  if (element.id === 'scrim') { state.settings = false; state.hidden = false; render(); return; }
+  if (element.id === 'calendar-scrim') { closeCalendarSheet(); return; }
+  if (element.id === 'scrim') { const wasSettings = state.settings; state.settings = false; state.hidden = false; render(wasSettings); return; }
   const target=element.closest<HTMLElement>('button');if(!target)return;
+  if (target.id === 'calendar-close') { closeCalendarSheet(); return; }
+  if (target.id === 'calendar-current') { customPickCalendar = undefined; flashCalendar = true; render(); return; }
+  if (target.dataset.calendarField) {
+    calendarSheet = { field: target.dataset.calendarField as CalendarField };
+    animateCalendarSheet = true;
+    render(true);
+    document.getElementById('calendar-close')?.focus({ preventScroll: true });
+    return;
+  }
+  if (target.dataset.calendarStem || target.dataset.calendarBranch) {
+    chooseCalendarValue(target.dataset.calendarStem, target.dataset.calendarBranch);
+    return;
+  }
   if (Date.now() < suppressRecordClickUntil && target.closest('[data-record-id]')) { event.preventDefault(); return; }
   if (target.id === 'records-open') {
     state.page = 'records'; recordFilter = 'favorite'; recordSearch = ''; revealedRecord = undefined;
@@ -289,7 +378,7 @@ document.addEventListener('click',event=>{
     const entry = records.find(item => item.id === target.dataset.recordOpen);
     if (entry) {
       openedRecord = entry;
-      state.chart = castChart(entry.lines, entry.time);
+      state.chart = castChart(entry.lines, entry.time, entry.calendar);
       chartOrigin = target.dataset.recordOrigin === 'home' ? 'home-recent' : 'records';
       showChart();
     }
@@ -326,7 +415,7 @@ document.addEventListener('click',event=>{
   }
   if (target.id === 'pick-submit') {
     const lines = picker.lines();
-    if (lines) submit(lines);
+    if (lines) submit(lines, true);
     return;
   }
   if(target.dataset.method){state.method=target.dataset.method as EntryMethod;safeSet('liuyao.method',state.method);render();return;}
@@ -343,8 +432,15 @@ document.addEventListener('click',event=>{
   if(target.id==='previous'){if(state.active>0)state.active--;render();return;}
   if(target.id==='coin-submit'){if(state.coins.every(Boolean))submit(state.coins as LineInput[]);return;}
   if(target.id==='back'){if(chartOrigin==='entry') resetEntry(); else {state.page=chartOrigin==='records'?'records':'entry';state.hidden=false;}render();window.scrollTo(0,0);return;}
-  if(target.id==='settings'){state.settings=true;render();return;}
-  if(target.id==='settings-done'||target.id==='scrim'){state.settings=false;render();return;}
+  if(target.id==='settings'){state.settings=true;render(true);return;}
+  if(target.id==='settings-done'||target.id==='scrim'){state.settings=false;render(true);return;}
+  if (target.id === 'nayin-toggle') {
+    showNayin = !showNayin;
+    safeSet('liuyao.showNayin', showNayin ? 'on' : 'off');
+    render(true);
+    document.getElementById('nayin-toggle')?.focus({ preventScroll: true });
+    return;
+  }
   if(target.dataset.mode){state.mode=target.dataset.mode as 'all'|'moving';safeSet('liuyao.transform',state.mode);render();return;}
   if(target.id==='quick-mode'){state.mode=state.mode==='all'?'moving':'all';safeSet('liuyao.transform',state.mode);render();return;}
   if(target.id==='hidden-toggle'){state.hidden=!state.hidden;render();return;}
@@ -369,7 +465,7 @@ document.addEventListener('toggle', event => {
   const details = event.target as HTMLDetailsElement;
   if (details.id === 'hex-catalog' && details.isConnected) picker.setBrowseOpen(details.open);
 }, true);
-document.addEventListener('keydown',event=>{if(event.key==='Escape'&&(state.settings||state.hidden)){state.settings=false;state.hidden=false;render();}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape' && calendarSheet){closeCalendarSheet();return;}if(event.key==='Escape'&&(state.settings||state.hidden)){const wasSettings=state.settings;state.settings=false;state.hidden=false;render(wasSettings);}});
 document.addEventListener('change', async event => {
   const input = event.target as HTMLInputElement;
   if (input.id !== 'backup-file' || !input.files?.[0]) return;
@@ -467,6 +563,6 @@ render();
 
 if (import.meta.env.PROD && window.isSecureContext && 'serviceWorker' in navigator &&
     document.querySelector('link[rel="manifest"]')) {
-  enableAppUpdates(() => state.page === 'entry' && !state.hidden && !timeEdited &&
+  enableAppUpdates(() => state.page === 'entry' && !state.hidden && !timeEdited && !calendarSheet && !customPickCalendar &&
     !state.question && !state.pages.some(Boolean) && !state.coins.some(Boolean) && !picker.hasDraft());
 }

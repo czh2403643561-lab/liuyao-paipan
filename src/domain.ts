@@ -42,7 +42,7 @@ export function instantLines(date: string): LineInput[] {
   return [...lower.lines, ...upper.lines].map((yang, index) => ({ yang, moving: index === movingAt }));
 }
 
-function solarPillars(date: string): PillarData {
+export function solarPillars(date: string): PillarData {
   const lunar = lunarAt(date);
   const y = lunar.getYearInGanZhiExact(); const m = lunar.getMonthInGanZhiExact();
   // Exact 口径在 23:00 换日，日柱和旬空必须使用同一口径。
@@ -50,10 +50,21 @@ function solarPillars(date: string): PillarData {
   const voids = [...lunar.getDayXunKongExact()];
   return { year:y, month:m, day:d, hour:h, monthBranch:m[1], dayBranch:d[1], voids };
 }
-function sixGods(dayStem: string): string[] {
+export function sixGods(dayStem: string): string[] {
   const start: Record<string, number> = {甲:0,乙:0,丙:1,丁:1,戊:2,己:3,庚:4,辛:4,壬:5,癸:5};
   const order = ['青龙','朱雀','勾陈','螣蛇','白虎','玄武'];
   return Array.from({length:6}, (_, i) => order[(start[dayStem] + i) % 6]);
+}
+export const dayStems = [...'甲乙丙丁戊己庚辛壬癸'];
+export const calendarBranches = Object.keys(branchElement);
+export type ChartCalendar = { mode: 'current' | 'custom'; monthBranch: string; dayStem: string; dayBranch: string };
+
+export function dayVoids(stem: string, branch: string): string[] | undefined {
+  const gan = dayStems.indexOf(stem);
+  const zhi = calendarBranches.indexOf(branch);
+  if (gan < 0 || zhi < 0 || gan % 2 !== zhi % 2) return;
+  const start = (zhi - gan + 12) % 12;
+  return [calendarBranches[(start + 10) % 12], calendarBranches[(start + 11) % 12]];
 }
 function palaceFor(bits: boolean[]): { palace: Trigram; 世: number; 游归: string } {
   for (const palace of trigrams) {
@@ -90,8 +101,14 @@ export function listHexagrams() {
     palace: palaceFor([...lower.lines, ...upper.lines]).palace.name,
   })));
 }
-export function castChart(lines: LineInput[], date: string) {
+export function castChart(lines: LineInput[], date: string, calendar?: ChartCalendar) {
   const pillars=solarPillars(date); const original=lines.map(l=>l.yang); const changed=lines.map(l=>l.moving?!l.yang:l.yang);
+  if (calendar?.mode === 'custom') {
+    pillars.monthBranch = calendar.monthBranch;
+    pillars.day = calendar.dayStem + calendar.dayBranch;
+    pillars.dayBranch = calendar.dayBranch;
+    pillars.voids = dayVoids(calendar.dayStem, calendar.dayBranch)!;
+  }
   const lower=trigram(original.slice(0,3)), upper=trigram(original.slice(3)); const lower2=trigram(changed.slice(0,3)),upper2=trigram(changed.slice(3));
   const palace=palaceFor(original); const palace2=palaceFor(changed); const voids=pillars.voids;
   const make = (bits: boolean[], palaceElement: string) => bits.map((yang, i) => {
