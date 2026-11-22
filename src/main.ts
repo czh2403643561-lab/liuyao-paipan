@@ -1,6 +1,7 @@
 import './styles.css';
 import { branchElement, castChart, dayVoids, instantLines, trigrams, type ChartCalendar, type LineInput } from './domain';
-import { isResultStatus, makeBackup, methodLabels, readRecords, recordTitle, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
+import { makeBackup, methodLabels, readRecords, recordTitle, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
+import { createVerdictForm } from './verdict';
 import { makePicker } from './picker';
 import { enableAppUpdates } from './app-update';
 import { nayinName } from './nayin';
@@ -207,7 +208,7 @@ function renderChart(): string {
       <div id="pan-hidden-detail" class="pan-hidden-detail"${state.hidden ? '' : ' hidden'}>${hiddenDetail || '本卦六亲齐全。'}</div>
     </section>
     ${openedRecord?.method === 'image' ? `<section class="card image-evidence"><div class="section-title"><strong>原图 · 取象</strong><button type="button" id="image-edit">编辑</button></div><div class="image-evidence-body"><button type="button" id="image-view" aria-label="查看原图"><img src="${openedRecord.image}" alt="取象原图"></button><p>${esc(openedRecord.imageNote ?? '')}</p></div></section>` : ''}
-    <button class="primary restart" id="restart">重新起卦</button>${openedRecord ? renderCase(openedRecord) : ''}
+    <button class="primary restart" id="restart">重新起卦</button>${openedRecord ? '<div id="verdict-slot"></div>' : ''}
   </main>
   ${periodState ? renderPeriod(periodState, openedRecord?.time ?? state.time, chart.pillars.day, chart.pillars.month) : ''}
   ${imageSheet ? `<div class="scrim" id="image-scrim"><section class="sheet image-sheet"><div class="sheet-handle"></div><button type="button" id="image-close" aria-label="关闭">×</button><h2>${imageSheet === 'view' ? '原图' : '编辑取象笔记'}</h2>${imageSheet === 'view' ? `<img src="${openedRecord?.image}" alt="取象原图">` : `<form id="image-edit-form"><textarea id="image-edit-note" maxlength="60" rows="4">${esc(openedRecord?.imageNote ?? '')}</textarea><div id="image-edit-count">${[...(openedRecord?.imageNote ?? '')].length} / 60</div><button class="primary" type="submit">保存</button></form>`}</section></div>` : ''}
@@ -215,17 +216,6 @@ function renderChart(): string {
     <div class="nayin-setting"><div><strong id="nayin-setting-label">显示纳音</strong><p class="hint" id="nayin-setting-hint">每爻纳甲下方的小字纳音名</p></div><button type="button" id="nayin-toggle" role="switch" aria-checked="${showNayin}" aria-labelledby="nayin-setting-label" aria-describedby="nayin-setting-hint"></button></div>
     <button class="plain-action" id="settings-done">完成</button></section></div>` : ''}`;
 }
-function renderCase(entry: RecordEntry): string {
-  const status = entry.result ?? 'pending';
-  return `<form class="card case-form" id="case-form">
-    <div class="judgment-heading"><label for="judgment">我的断语</label><span id="judgment-status" role="status" hidden>有更新</span><button class="primary" type="submit">保存断语</button></div>
-    <textarea id="judgment" name="judgment" rows="4" placeholder="写下你的判断，方便日后回看">${esc(entry.judgment ?? '')}</textarea>
-    <label for="case-result">应验状态</label>
-    <select id="case-result" name="result">${Object.entries(resultLabels).map(([value, label]) =>
-      `<option value="${value}" ${value === status ? 'selected' : ''}>${label}</option>`).join('')}</select>
-  </form>`;
-}
-
 function recordsList(): string {
   const query = recordSearch.trim().toLowerCase();
   const matches = records
@@ -277,10 +267,27 @@ function render(preserveChartForms = false) {
   document.body.classList.toggle('pan-page', state.page === 'chart');
   document.body.classList.toggle('records-page', state.page === 'records');
   const app = document.querySelector<HTMLDivElement>('#app')!;
-  const forms = preserveChartForms && state.page === 'chart' ? [...app.querySelectorAll<HTMLFormElement>('#case-form, #note-form')] : [];
+  const noteForm = preserveChartForms && state.page === 'chart' ? app.querySelector('#note-form') : null;
+  const verdictForm = app.querySelector<HTMLFormElement>('#case-form');
   const page = state.page === 'entry' ? renderEntry() : state.page === 'image' ? renderImageWorkspace() : state.page === 'chart' ? renderChart() : renderRecords();
   app.innerHTML = page + (calendarSheet ? renderCalendarSheet(calendarSheet, activeCalendar(), animateCalendarSheet) : '');
-  for (const form of forms) app.querySelector(`#${form.id}`)?.replaceWith(form);
+  if (noteForm) app.querySelector('#note-form')?.replaceWith(noteForm);
+  const verdictSlot = app.querySelector('#verdict-slot');
+  if (verdictSlot && openedRecord) {
+    const entry = openedRecord;
+    verdictSlot.replaceWith(verdictForm?.dataset.verdictRecordId === entry.id ? verdictForm : createVerdictForm(entry, (sections) => {
+      const current = records.find(item => item.id === entry.id);
+      if (!current) return false;
+      const updated: RecordEntry = { ...current, verdictSections: sections,
+        judgment: sections[0].content, result: sections[0].verified ? 'verified' : 'pending' };
+      const next = records.map(item => item.id === entry.id ? updated : item);
+      if (!writeRecords(next)) return false;
+      records = next;
+      storageFailed = false;
+      if (openedRecord?.id === entry.id) openedRecord = updated;
+      return true;
+    }));
+  }
   if (calendarSheet) {
     for (const section of app.querySelectorAll<HTMLElement>(':scope > main, :scope > header')) section.inert = true;
   }
@@ -546,19 +553,6 @@ document.addEventListener('submit', event => {
     commitRecords(records.map(item => item.id === openedRecord!.id ? openedRecord! : item));
     imageSheet = undefined; render(true); return;
   }
-  if (form.id === 'case-form' && openedRecord) {
-    event.preventDefault();
-    const data = new FormData(form);
-    const result = data.get('result');
-    if (!isResultStatus(result)) return;
-    const updated = { ...openedRecord, judgment: String(data.get('judgment') ?? '').trim(), result };
-    commitRecords(records.map(item => item.id === updated.id ? updated : item));
-    openedRecord = updated;
-    const save = form.querySelector<HTMLButtonElement>('.judgment-heading button')!;
-    save.textContent = storageFailed ? '本机保存失败' : '已保存';
-    form.querySelector<HTMLElement>('#judgment-status')!.hidden = true;
-    return;
-  }
   if ((event.target as HTMLElement).id !== 'note-form' || !openedRecord) return;
   event.preventDefault();
   const question = document.querySelector<HTMLInputElement>('#note-input')!.value.trim();
@@ -568,16 +562,6 @@ document.addEventListener('submit', event => {
   if (chartOrigin === 'entry') state.question = question;
   editingQuestion = false;
   render();
-});
-
-document.addEventListener('input', event => {
-  const target = event.target as HTMLElement;
-  if ((target.id === 'judgment' || target.id === 'case-result') && openedRecord) {
-    const status = document.querySelector<HTMLElement>('#judgment-status');
-    if (status) status.hidden = false;
-    const save = document.querySelector<HTMLButtonElement>('.judgment-heading button');
-    if (save) save.textContent = '保存断语';
-  }
 });
 
 // App interaction contract: scrolling and text editing remain available; zoom gestures do not.

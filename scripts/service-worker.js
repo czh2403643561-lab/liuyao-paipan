@@ -40,7 +40,18 @@ self.addEventListener('fetch', event => {
   if (!rootNavigation && !assets.has(request.url) && !versionedAsset) return;
   event.respondWith((async () => {
     const cache = await caches.open(cacheName);
-    if (rootNavigation) return (await cache.match(shell)) ?? fetch(request);
+    if (rootNavigation) {
+      const cached = await cache.match(shell);
+      if (!cached) return fetch(request);
+      // Hosts can redirect .html URLs to extensionless routes. Navigation requests
+      // reject cached redirected responses; return a fresh response without that
+      // redirect metadata while retaining the cached document and its headers.
+      return new Response(cached.body, {
+        status: cached.status,
+        statusText: cached.statusText,
+        headers: cached.headers,
+      });
+    }
     if (request.url === manifest) {
       const cached = await cache.match(request);
       try {
