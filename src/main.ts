@@ -1,6 +1,6 @@
 import './styles.css';
 import { branchElement, castChart, dayVoids, instantLines, trigrams, type ChartCalendar, type LineInput } from './domain';
-import { makeBackup, methodLabels, readRecords, recordTitle, restoreBackup, resultLabels, writeRecords, type Method, type RecordEntry } from './records';
+import { feedbackDays, latestFeedback, makeBackup, methodLabels, readRecords, recordTitle, restoreBackup, writeRecords, type Method, type RecordEntry } from './records';
 import { createVerdictForm } from './verdict';
 import { makePicker } from './picker';
 import { enableAppUpdates } from './app-update';
@@ -58,11 +58,11 @@ function safeSet(key: string, value: string): void { try { localStorage.setItem(
 function esc(s: string): string { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!)); }
 function branchText(p: string): string { return [...p].map(c => branchElement[c] ? `<span class="el-${branchElement[c]}">${c}</span>` : c).join(''); }
 function lineMark(yang:boolean, faint=false):string { if (faint) return '<span class="yao faint" aria-hidden="true"></span>'; return `<span class="yao ${yang?'yang':'yin'} ${faint?'faint':''}" aria-hidden="true"><i></i>${yang?"":"<i></i>"}</span>`; }
-function currentTime(): string {
+function currentTime(date = new Date()): string {
   const parts = new Intl.DateTimeFormat('sv-SE', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts();
+  }).formatToParts(date);
   const part = (type: string) => parts.find(item => item.type === type)?.value;
   return part('year') + '-' + part('month') + '-' + part('day') + 'T' + part('hour') + ':' + part('minute');
 }
@@ -128,7 +128,7 @@ function renderImageWorkspace(): string {
   return `<main class="shell image-workspace"><header class="topbar chart-nav"><button id="image-back" aria-label="返回首页">‹</button><h1>观象</h1></header>
     <section class="card image-photo"><img src="${imageData}" alt="待取象的照片"><div class="image-divider" aria-hidden="true"></div><button type="button" data-image-source="album">换一张</button><input id="image-album" type="file" accept="image/*" hidden></section>
     ${imagePicker.renderWorkspace(lineMark)}
-    <section class="card image-note-card"><div class="section-title"><h2>取象笔记</h2><span id="image-count">${[...imageNote].length} / 60</span></div><p class="hint">记录的标题取笔记第一句（到第一个标点为止）</p><textarea id="image-note" maxlength="60" rows="3">${esc(imageNote)}</textarea></section>
+    <section class="card image-note-card"><div class="section-title"><h2>取象笔记</h2></div><p class="hint">记录的标题取笔记第一句（到第一个标点为止）</p><textarea id="image-note" rows="3">${esc(imageNote)}</textarea></section>
     ${imageError ? `<p role="status" class="hint">${esc(imageError)}</p>` : ''}<button class="primary" id="image-submit" ${imagePicker.lines() ? '' : 'disabled'}>确认起卦</button></main>`;
 }
 function renderChart(): string {
@@ -198,6 +198,8 @@ function renderChart(): string {
       <div class="pan-head pan-change"><div class="pan-label">变卦</div>
         ${isStatic ? '' : `<h2>${chart.changedName}</h2><button id="quick-mode" class="pan-mode" aria-label="变卦显示：${state.mode === 'all' ? '全部' : '仅动爻'}">${state.mode === 'all' ? '全部' : '仅动爻'}</button>`}
       </div>
+      ${[5,4,3,2,1,0].filter(index => chart.lines[index].moving).map(index =>
+        `<span class="pan-moving-background" style="grid-row: ${7 - index} / span 1" aria-hidden="true"></span>`).join('')}
       ${[5,4,3,2,1,0].map(index => row(index, 'main') + (isStatic ? '' : row(index, 'change'))).join('')}
       ${isStatic ? '<div class="pan-static">静卦 · 无变卦</div>' : ''}
     </section>
@@ -211,7 +213,7 @@ function renderChart(): string {
     <button class="primary restart" id="restart">重新起卦</button>${openedRecord ? '<div id="verdict-slot"></div>' : ''}
   </main>
   ${periodState ? renderPeriod(periodState, openedRecord?.time ?? state.time, chart.pillars.day, chart.pillars.month) : ''}
-  ${imageSheet ? `<div class="scrim" id="image-scrim"><section class="sheet image-sheet"><div class="sheet-handle"></div><button type="button" id="image-close" aria-label="关闭">×</button><h2>${imageSheet === 'view' ? '原图' : '编辑取象笔记'}</h2>${imageSheet === 'view' ? `<img src="${openedRecord?.image}" alt="取象原图">` : `<form id="image-edit-form"><textarea id="image-edit-note" maxlength="60" rows="4">${esc(openedRecord?.imageNote ?? '')}</textarea><div id="image-edit-count">${[...(openedRecord?.imageNote ?? '')].length} / 60</div><button class="primary" type="submit">保存</button></form>`}</section></div>` : ''}
+  ${imageSheet ? `<div class="scrim" id="image-scrim"><section class="sheet image-sheet"><div class="sheet-handle"></div><button type="button" id="image-close" aria-label="关闭">×</button><h2>${imageSheet === 'view' ? '原图' : '编辑取象笔记'}</h2>${imageSheet === 'view' ? `<img src="${openedRecord?.image}" alt="取象原图">` : `<form id="image-edit-form"><textarea id="image-edit-note" rows="4">${esc(openedRecord?.imageNote ?? '')}</textarea><button class="primary" type="submit">保存</button></form>`}</section></div>` : ''}
   ${state.settings ? `<div class="scrim" id="scrim"><section class="sheet"><div class="sheet-handle"></div><h2>设置</h2><p>变卦显示</p><div class="segmented"><button data-mode="all" class="${state.mode==='all'?'selected':''}">全部显示</button><button data-mode="moving" class="${state.mode==='moving'?'selected':''}">仅动爻</button></div>
     <div class="nayin-setting"><div><strong id="nayin-setting-label">显示纳音</strong><p class="hint" id="nayin-setting-hint">每爻纳甲下方的小字纳音名</p></div><button type="button" id="nayin-toggle" role="switch" aria-checked="${showNayin}" aria-labelledby="nayin-setting-label" aria-describedby="nayin-setting-hint"></button></div>
     <button class="plain-action" id="settings-done">完成</button></section></div>` : ''}`;
@@ -220,7 +222,8 @@ function recordsList(): string {
   const query = recordSearch.trim().toLowerCase();
   const matches = records
     .filter(item => recordFilter === 'recent' || item.favorite)
-    .filter(item => [item.question, item.original, item.transformed, item.judgment, item.imageNote].some(text => text?.toLowerCase().includes(query)))
+    .filter(item => [item.question, item.original, item.transformed, item.judgment, item.imageNote].some(text => text?.toLowerCase().includes(query)) ||
+      item.verdictSections?.some(section => section.feedbacks?.some(feedback => feedback.text.toLowerCase().includes(query))))
     .sort((a, b) => (b.createdAt ?? b.time).localeCompare(a.createdAt ?? a.time));
   if (!matches.length) {
     return '<p class="records-empty">' + (query ? '未找到符合条件的记录' : recordFilter === 'favorite' ? '暂无收藏，去最近记录点「收藏」即可添加' : '暂无排盘记录') + '</p>';
@@ -230,13 +233,15 @@ function recordsList(): string {
     const same = records.filter(other => other.id !== item.id && other.time === item.time && other.question === item.question && other.original === item.original && other.transformed === item.transformed);
     const repeat = same.length ? ` · 同刻第${same.filter(other => (other.createdAt ?? other.id) < (item.createdAt ?? item.id)).length + 1}次` : '';
     const revealed = revealedRecord === item.id;
+    const feedback = latestFeedback(item.verdictSections?.flatMap(section => section.feedbacks ?? []) ?? []);
     return `<article class="record-item${revealed ? ' delete-revealed' : ''}" data-record-id="${id}">
       <button class="record-open" data-record-open="${id}">
         ${item.method === 'image' && item.image ? `<img class="record-thumb" src="${item.image}" alt="">` : ''}<strong>${esc(recordTitle(item))}</strong>
         <span class="record-names">${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ' · 静卦'}</span>
         <span class="record-meta"><time>${item.time.replace('T', ' ')}</time><small>${methodLabels[item.method]}</small></span>
         ${repeat || item.createdAt ? `<span class="record-save-meta">${repeat.replace(/^ · /, '')}${repeat && item.createdAt ? ' · ' : ''}${item.createdAt ? `存于 ${new Date(item.createdAt).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}` : ''}</span>` : ''}
-        ${item.judgment || item.result ? `<span class="case-summary">${resultLabels[item.result ?? 'pending']}${item.judgment ? ' · ' + esc(item.judgment) : ''}</span>` : ''}
+        ${item.judgment ? `<span class="case-summary">${esc(item.judgment)}</span>` : ''}
+        ${feedback ? `<span class="record-feedback">已反馈 · 起卦后 ${feedbackDays(item.time, feedback.date)} 天：${esc(feedback.text)}</span>` : ''}
         <span class="record-arrow" aria-hidden="true">›</span>
       </button>
       <button class="record-star" data-record-star="${id}" aria-pressed="${item.favorite}" aria-label="${item.favorite ? '取消收藏' : '收藏'}" ${revealed ? 'disabled' : ''}>${item.favorite ? '已收藏' : '收藏'}</button>
@@ -248,7 +253,7 @@ function recordsList(): string {
 function renderRecords(): string {
   return `<main class="shell records-shell">
     <header class="topbar chart-nav"><button id="records-back" aria-label="返回起卦">‹</button><h1>记录</h1></header>
-    <label class="card records-search"><i aria-hidden="true"></i><input id="records-search" type="search" aria-label="搜索所问、卦名或断语" placeholder="搜索所问、卦名或断语" value="${esc(recordSearch)}"></label>
+    <label class="card records-search"><i aria-hidden="true"></i><input id="records-search" type="search" aria-label="搜索所问、卦名、断语或反馈" placeholder="搜索所问、卦名、断语或反馈" value="${esc(recordSearch)}"></label>
     <div class="segmented records-tabs"><button data-record-filter="recent" aria-pressed="${recordFilter === 'recent'}" class="${recordFilter === 'recent' ? 'selected' : ''}">最近</button><button data-record-filter="favorite" aria-pressed="${recordFilter === 'favorite'}" class="${recordFilter === 'favorite' ? 'selected' : ''}">收藏</button></div>
     <section class="card backup-card">
       <button class="plain-action" id="export-backup" ${records.length ? '' : 'disabled aria-describedby="backup-empty"'}>导出备份</button>
@@ -279,14 +284,14 @@ function render(preserveChartForms = false) {
       const current = records.find(item => item.id === entry.id);
       if (!current) return false;
       const updated: RecordEntry = { ...current, verdictSections: sections,
-        judgment: sections[0].content, result: sections[0].verified ? 'verified' : 'pending' };
+        judgment: sections[0].content, result: current.result === 'verified' && !sections[0].verified ? undefined : current.result };
       const next = records.map(item => item.id === entry.id ? updated : item);
       if (!writeRecords(next)) return false;
       records = next;
       storageFailed = false;
       if (openedRecord?.id === entry.id) openedRecord = updated;
       return true;
-    }));
+    }, date => currentTime(date).slice(0, 10)));
   }
   if (calendarSheet) {
     for (const section of app.querySelectorAll<HTMLElement>(':scope > main, :scope > header')) section.inert = true;
@@ -496,8 +501,8 @@ document.addEventListener('click',event=>{
 });
 document.addEventListener('input',event=>{
   const el=event.target as HTMLInputElement;
-  if (el.id === 'image-note') { imageNote = [...el.value].slice(0, 60).join(''); document.getElementById('image-count')!.textContent = `${[...imageNote].length} / 60`; return; }
-  if (el.id === 'image-edit-note') { document.getElementById('image-edit-count')!.textContent = `${[...el.value].length} / 60`; return; }
+  if (el.id === 'image-note') { imageNote = el.value; return; }
+  if (el.id === 'image-edit-note') return;
   if (el.id === 'hex-search') {
     document.getElementById('hex-results')!.innerHTML = picker.search(el.value);
     return;
@@ -548,7 +553,7 @@ document.addEventListener('submit', event => {
   const form = event.target as HTMLFormElement;
   if (form.id === 'image-edit-form' && openedRecord) {
     event.preventDefault();
-    const note = [...(form.querySelector<HTMLTextAreaElement>('#image-edit-note')?.value ?? '')].slice(0, 60).join('');
+    const note = form.querySelector<HTMLTextAreaElement>('#image-edit-note')?.value ?? '';
     openedRecord = { ...openedRecord, imageNote: note };
     commitRecords(records.map(item => item.id === openedRecord!.id ? openedRecord! : item));
     imageSheet = undefined; render(true); return;
