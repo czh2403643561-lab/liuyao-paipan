@@ -26,6 +26,8 @@ let chartOrigin: 'entry' | 'records' | 'home-recent' = 'entry';
 let recordFilter: 'recent' | 'favorite' = 'recent';
 let recordSearch = '';
 let revealedRecord: string | undefined;
+const swipeDeleteHintKey = 'liuyao.learnedSwipeDelete';
+let learnedSwipeDelete = safeGet(swipeDeleteHintKey) === 'true';
 let storageFailed = false;
 let editingQuestion = false;
 let backupMessage = '';
@@ -230,17 +232,17 @@ function recordsList(): string {
   }
   return matches.map(item => {
     const id = esc(item.id);
-    const same = records.filter(other => other.id !== item.id && other.time === item.time && other.question === item.question && other.original === item.original && other.transformed === item.transformed);
-    const repeat = same.length ? ` · 同刻第${same.filter(other => (other.createdAt ?? other.id) < (item.createdAt ?? item.id)).length + 1}次` : '';
+    const title = recordTitle(item, '');
+    const hexagrams = item.transformed ? `${item.original} → ${item.transformed}` : item.original;
+    const hexagramCaption = item.transformed ? hexagrams : `${hexagrams} · 静卦`;
     const revealed = revealedRecord === item.id;
     const feedback = latestFeedback(item.verdictSections?.flatMap(section => section.feedbacks ?? []) ?? []);
     return `<article class="record-item${revealed ? ' delete-revealed' : ''}" data-record-id="${id}">
       <button class="record-open" data-record-open="${id}">
-        ${item.method === 'image' && item.image ? `<img class="record-thumb" src="${item.image}" alt="">` : ''}<strong>${esc(recordTitle(item))}</strong>
-        <span class="record-names">${esc(item.original)}${item.transformed ? ' → ' + esc(item.transformed) : ' · 静卦'}</span>
+        ${item.method === 'image' && item.image ? `<img class="record-thumb" src="${item.image}" alt="">` : ''}<strong>${esc(title || hexagrams)}</strong>
+        ${title ? `<span class="record-names">${esc(hexagramCaption)}</span>` : ''}
         <span class="record-meta"><time>${item.time.replace('T', ' ')}</time><small>${methodLabels[item.method]}</small></span>
-        ${repeat || item.createdAt ? `<span class="record-save-meta">${repeat.replace(/^ · /, '')}${repeat && item.createdAt ? ' · ' : ''}${item.createdAt ? `存于 ${new Date(item.createdAt).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}` : ''}</span>` : ''}
-        ${item.judgment ? `<span class="case-summary">${esc(item.judgment)}</span>` : ''}
+        ${item.judgment?.trim() ? `<span class="case-summary">断语：${esc(item.judgment)}</span>` : ''}
         ${feedback ? `<span class="record-feedback">已反馈 · 起卦后 ${feedbackDays(item.time, feedback.date)} 天：${esc(feedback.text)}</span>` : ''}
         <span class="record-arrow" aria-hidden="true">›</span>
       </button>
@@ -255,16 +257,16 @@ function renderRecords(): string {
     <header class="topbar chart-nav"><button id="records-back" aria-label="返回起卦">‹</button><h1>记录</h1></header>
     <label class="card records-search"><i aria-hidden="true"></i><input id="records-search" type="search" aria-label="搜索所问、卦名、断语或反馈" placeholder="搜索所问、卦名、断语或反馈" value="${esc(recordSearch)}"></label>
     <div class="segmented records-tabs"><button data-record-filter="recent" aria-pressed="${recordFilter === 'recent'}" class="${recordFilter === 'recent' ? 'selected' : ''}">最近</button><button data-record-filter="favorite" aria-pressed="${recordFilter === 'favorite'}" class="${recordFilter === 'favorite' ? 'selected' : ''}">收藏</button></div>
-    <section class="card backup-card">
-      <button class="plain-action" id="export-backup" ${records.length ? '' : 'disabled aria-describedby="backup-empty"'}>导出备份</button>
-      <button class="plain-action" id="import-backup">导入备份</button>
+    <section class="backup-row">
+      <button id="export-backup" ${records.length ? '' : 'disabled aria-describedby="backup-empty"'}>导出备份</button>
+      <button id="import-backup">导入备份</button>
       <input type="file" id="backup-file" accept=".json,application/json" hidden>
       ${records.length ? '' : '<p id="backup-empty">暂无记录可导出</p>'}
       ${backupMessage ? `<p role="status">${esc(backupMessage)}</p>` : ''}
     </section>
+    ${learnedSwipeDelete ? '' : '<p class="swipe-delete-hint">‹ 左滑记录可以删除</p>'}
     ${storageFailed ? '<p role="status" class="hint">浏览器未能写入本机储存，本次更改仅保留在当前页面。</p>' : ''}
     <section class="card records-list" id="records-list">${recordsList()}</section>
-    <p class="records-footer">点击记录查看排盘 · 点「收藏」保存 · 左滑可删除</p>
   </main>`;
 }
 
@@ -438,10 +440,15 @@ document.addEventListener('click',event=>{
     render(); return;
   }
   if (target.dataset.recordDelete) {
-    if (window.confirm('删除这条排盘记录？')) {
-      commitRecords(records.filter(item => item.id !== target.dataset.recordDelete));
-      revealedRecord = undefined; render();
+    const id = target.dataset.recordDelete;
+    if (id !== revealedRecord || !records.some(item => item.id === id)) return;
+    commitRecords(records.filter(item => item.id !== id));
+    if (!storageFailed && !learnedSwipeDelete) {
+      learnedSwipeDelete = true;
+      safeSet(swipeDeleteHintKey, 'true');
     }
+    revealedRecord = undefined;
+    render();
     return;
   }
   if (target.id === 'edit-note') { editingQuestion = true; render(); document.getElementById('note-input')?.focus(); return; }

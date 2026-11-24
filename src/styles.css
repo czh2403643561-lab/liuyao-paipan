@@ -87,9 +87,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #537c97; outline-
 .record-star { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border: 0; padding: 0; background: transparent; color: #8e979f; font-size: 26px; cursor: pointer; }
 .record-star[aria-pressed="true"] { color: var(--blue); }
 .record-delete { position: absolute; right: 0; top: 50%; transform: translateY(-50%); min-height: 44px; border: 0; border-radius: 9px; padding: 0 12px; background: #a44d49; color: #fff; cursor: pointer; }
-.records-empty, .records-footer { margin: 0; text-align: center; font-size: 13px; color: #59646d; }
-.records-empty { padding: 27px 0; }
-.records-footer { margin-top: 3px; }
+.records-empty { margin: 0; padding: 27px 0; text-align: center; font-size: 13px; color: #59646d; }
 button.chart-question { text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
 .chart-question span { font-size: 13px; color: var(--blue); }
 .note-form { display: grid; gap: 8px; }
@@ -134,12 +132,13 @@ button.chart-question { text-align: left; display: flex; justify-content: space-
   border: 1px solid var(--line); background: #fafbfc; border-radius: 10px;
 }
 .case-form textarea { display: block; resize: vertical; min-height: 110px; }
-.case-summary { color: var(--blue); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.record-feedback { color: #8D642A; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.backup-card { display: flex; flex-wrap: wrap; justify-content: space-around; padding: 4px 8px; }
-.backup-card button { min-height: 44px; }
-.backup-card button:disabled { opacity: .5; }
-.backup-card p { width: 100%; margin: 0 8px 8px; color: var(--blue); font-size: 14px; }
+.case-summary, .record-feedback { color: #8D642A; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.record-feedback { font-weight: 600; }
+.backup-row { display: flex; flex-wrap: wrap; justify-content: center; column-gap: 22px; }
+.backup-row button { min-height: 36px; padding: 0 6px; border: 0; background: transparent; color: #79551F; font-size: 13.5px; cursor: pointer; }
+.backup-row button:disabled { opacity: .5; cursor: default; }
+.backup-row p { flex-basis: 100%; margin: 0; color: var(--blue); text-align: center; font-size: 13px; }
+.swipe-delete-hint { margin: 0; color: #6D7885; text-align: center; font-size: 12px; }
 
 /* 排盘页色板和尺寸取自效果图。双列共用同一套网格行。 */
 .pan-page {
@@ -315,7 +314,6 @@ button.chart-question { text-align: left; display: flex; justify-content: space-
 .record-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; line-height: 1.5; }
 .record-meta time { white-space: nowrap; }
 .record-meta small { display: inline-block; font-size: 11px; padding: 1px 6px; line-height: 1.4; }
-.record-save-meta { color: #8A94A0; font-size: 11px; line-height: 1.5; }
 .record-delete {
   z-index: 2; right: 3px; width: 82px; height: 44px; padding: 0;
   border-radius: 12px; background: #A94D48; color: #fff; font-size: 14px;

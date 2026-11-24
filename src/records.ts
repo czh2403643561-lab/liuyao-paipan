@@ -94,10 +94,10 @@ function isRecord(value: unknown): value is RecordEntry {
     item.lines.every(line => line && typeof line.yang === 'boolean' && typeof line.moving === 'boolean');
 }
 
-export function recordTitle(item: RecordEntry): string {
-  if (item.method !== 'image') return item.question || '未填写所问何事';
+export function recordTitle(item: RecordEntry, fallback = item.method === 'image' ? '未填写取象笔记' : '未填写所问何事'): string {
+  if (item.method !== 'image') return item.question.trim() || fallback;
   const first = (item.imageNote ?? '').trim().split(/[，。；、：！？,.;:!?]/, 1)[0];
-  return [...first].slice(0, 20).join('') || '未填写取象笔记';
+  return [...first].slice(0, 20).join('') || fallback;
 }
 
 export function makeBackup(records: RecordEntry[]): string {
