@@ -8,6 +8,7 @@ import { nayinName } from './nayin';
 import { compressImage } from './image-local';
 import { initialPeriod, renderPeriod, type PeriodState } from './period';
 import { currentCalendar, renderCalendarSheet, renderPickCalendar, type CalendarField, type CalendarSheet } from './pick-calendar';
+import { courseEntry, openCourse } from './course';
 import { Solar } from 'lunar-javascript';
 
 type EntryMethod = Exclude<Method, 'instant'>;
@@ -102,7 +103,7 @@ function renderEntry():string {
   const complete=state.coins.every(Boolean); const valid=state.pages.every(validPage);
   const step=state.active; const ordinal=['初爻','二爻','三爻','四爻','五爻','上爻'];
   const coinOptions=[{n:'3背',desc:'老阳',mark:'○',back:3,char:0,yang:true,moving:true},{n:'2背1字',desc:'少阳',mark:'━',back:2,char:1,yang:true,moving:false},{n:'1背2字',desc:'少阴',mark:'━ ━',back:1,char:2,yang:false,moving:false},{n:'3字',desc:'老阴',mark:'×',back:0,char:3,yang:false,moving:true}];
-  const header = `<header class="topbar home-nav"><button id="records-open" aria-label="收藏">收藏</button></header>
+  const header = `<header class="topbar home-nav">${courseEntry}<button id="records-open" aria-label="收藏">收藏</button></header>
     <div class="card time-card">
       <button id="time-open" class="time-open">
         <span class="time-label">起卦时间</span>
@@ -185,11 +186,11 @@ function renderChart(): string {
 
   return `<header class="topbar chart-nav pan-nav"><button id="back" aria-label="${chartOrigin === 'entry' ? '返回起卦' : '返回记录'}">‹</button><h1>观爻</h1><button id="settings" aria-label="设置">⚙</button></header>
   <main class="shell pan-shell">
-    ${customCalendar ? '' : `<section class="card pan-time"><div class="pan-time-head"><div class="pan-date">${date}</div><button type="button" id="period-open" aria-label="查询往来干支"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg></button></div><div class="pan-pillars">${calendar}</div></section>`}
+    ${customCalendar ? '' : `<section class="card pan-time"><div class="pan-time-head"><div class="pan-date">${date}</div><div class="pan-time-actions">${courseEntry}<button type="button" id="period-open" aria-label="查询往来干支"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18M7 14h3M14 14h3M7 18h3"/></svg></button></div></div><div class="pan-pillars">${calendar}</div></section>`}
     ${editingQuestion
       ? `<form id="note-form" class="card chart-question note-form"><label for="note-input">所问何事</label><input id="note-input" maxlength="80" value="${esc(question)}"><button class="primary" type="submit">保存备注</button></form>`
       : `<button class="card chart-question" id="edit-note"><span class="pan-question ${question ? '' : 'muted'}">${esc(question || '添加所问何事')}</span><span>编辑</span></button>`}
-    <section class="card pan-month" aria-label="月建日辰旬空">
+    <section class="card pan-month${customCalendar ? ' pan-month-custom' : ''}" aria-label="月建日辰旬空">${customCalendar ? courseEntry : ''}
       <div>${customCalendar ? `<button type="button" data-calendar-field="month"><small>月建</small><b>${branchText(chart.pillars.monthBranch)}</b><span aria-hidden="true">▾</span></button>` : `<small>月建</small><b>${branchText(chart.pillars.monthBranch)}</b>`}</div>
       <div>${customCalendar ? `<button type="button" data-calendar-field="day"><small>日辰</small><b>${branchText(chart.pillars.day)}</b><span aria-hidden="true">▾</span></button>` : `<small>日辰</small><b>${branchText(chart.pillars.dayBranch)}</b>`}</div>
       <div><small>旬空</small><strong class="pan-chip kong">${chart.pillars.voids.join('')}</strong></div>
@@ -377,6 +378,10 @@ document.addEventListener('click',event=>{
   if (element.id === 'calendar-scrim') { closeCalendarSheet(); return; }
   if (element.id === 'scrim') { const wasSettings = state.settings; state.settings = false; state.hidden = false; render(wasSettings); return; }
   const target=element.closest<HTMLElement>('button');if(!target)return;
+  if (target.hasAttribute('data-course-open')) {
+    openCourse(document.getElementById('app')!, target as HTMLButtonElement);
+    return;
+  }
   if (target.id === 'period-open') { periodState = initialPeriod(openedRecord?.time ?? state.time); render(true); return; }
   if (target.id === 'period-close' || target.id === 'period-done') { periodState = undefined; render(true); return; }
   if (periodState && target.dataset.periodView) { periodState.view = target.dataset.periodView as 'day'|'month'; render(true); return; }
@@ -632,7 +637,7 @@ render();
 
 if (import.meta.env.PROD && window.isSecureContext && 'serviceWorker' in navigator &&
     document.querySelector('link[rel="manifest"]')) {
-  enableAppUpdates(() => state.page === 'entry' && !state.hidden && !timeEdited && !calendarSheet && !customPickCalendar &&
+  enableAppUpdates(() => state.page === 'entry' && !document.querySelector('.course-shell') && !state.hidden && !timeEdited && !calendarSheet && !customPickCalendar &&
     !state.question && !state.pages.some(Boolean) && !state.coins.some(Boolean) && !picker.hasDraft());
 }
 
